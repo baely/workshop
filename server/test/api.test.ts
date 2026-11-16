@@ -172,8 +172,8 @@ describe('API tokens', () => {
 });
 
 describe('lifetime usage', () => {
-  const ins = (run_id: string, ts: string, model: string, billing: string, i: number, o: number, c: number) =>
-    run('INSERT INTO spend (run_id, ts, model, billing, input_tokens, output_tokens, cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?)', run_id, Date.parse(ts), model, billing, i, o, c);
+  const ins = (run_id: string, ts: string, model: string, billing: string, i: number, o: number, c: number, repo: string | null = null) =>
+    run('INSERT INTO spend (run_id, ts, model, billing, input_tokens, output_tokens, cost_usd, repo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', run_id, Date.parse(ts), model, billing, i, o, c, repo);
 
   it('is empty before anything is recorded', async () => {
     const res = await request(app).get('/api/usage/lifetime').set('cookie', cookie);
@@ -181,6 +181,23 @@ describe('lifetime usage', () => {
     expect(res.body.since).toBeNull();
     expect(res.body.total).toEqual({ runs: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 });
     expect(res.body.byModel).toEqual([]);
+    expect(res.body.byProject).toEqual([]);
+  });
+
+  it('groups by project, with spend of unknown origin under null', async () => {
+    run('DELETE FROM spend');
+    ins('a', '2026-10-01T00:00:00Z', 'opus', 'subscription', 100, 10, 1, 'me/app');
+    ins('a', '2026-10-02T00:00:00Z', 'opus', 'subscription', 50, 5, 0.5, 'me/app'); // resumed
+    ins('b', '2026-10-03T00:00:00Z', 'sonnet', 'api', 20, 2, 2, 'me/other');
+    ins('c', '2026-10-04T00:00:00Z', 'sonnet', 'subscription', 10, 1, 0.1);
+    const b = (await request(app).get('/api/usage/lifetime').set('cookie', cookie)).body;
+    expect(b.byProject.map((p: { project: string | null }) => p.project)).toEqual(['me/other', 'me/app', null]);
+    expect(b.byProject[1]).toMatchObject({ runs: 1, inputTokens: 150 });
+    expect(b.byProject[2]).toMatchObject({ runs: 1, inputTokens: 10 });
+    const sum = (k: 'runs' | 'inputTokens') => b.byProject.reduce((n: number, p: Record<string, number>) => n + p[k], 0);
+    expect(sum('runs')).toBe(b.total.runs);
+    expect(sum('inputTokens')).toBe(b.total.inputTokens);
+    run('DELETE FROM spend');
   });
 
   it('totals by billing, model and month in the settings time zone', async () => {

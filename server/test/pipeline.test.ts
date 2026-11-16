@@ -531,8 +531,9 @@ describe('runner', () => {
     });
     const r = await settle(go());
     expect(r).toMatchObject({ status: 'succeeded', input_tokens: 10, output_tokens: 5, cost_usd: 0.25 });
-    const rows = all<object>('SELECT model, billing, input_tokens, output_tokens, cost_usd FROM spend WHERE run_id = ?', r.id);
-    expect(rows).toEqual([{ model: 'claude-sonnet-5-5', billing: 'subscription', input_tokens: 10, output_tokens: 5, cost_usd: 0.25 }]);
+    const rows = all<object>('SELECT model, billing, input_tokens, output_tokens, cost_usd, repo, agent, ticket FROM spend WHERE run_id = ?', r.id);
+    const t = one<{ number: number; full_name: string }>('SELECT tickets.number, repos.full_name FROM tickets JOIN repos ON repos.id = tickets.repo_id WHERE tickets.id = ?', r.ticket_id)!;
+    expect(rows).toEqual([{ model: 'claude-sonnet-5-5', billing: 'subscription', input_tokens: 10, output_tokens: 5, cost_usd: 0.25, repo: t.full_name, agent: r.agent, ticket: t.number }]);
     run('DELETE FROM runs WHERE id = ?', r.id);
     expect(all('SELECT id FROM spend WHERE run_id = ?', r.id)).toHaveLength(1);
   });
