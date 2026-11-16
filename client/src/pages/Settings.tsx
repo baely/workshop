@@ -77,6 +77,10 @@ function LifetimeUsage() {
               ]}
             />
             <SpendTable title="By model" label="model" rows={data.byModel.map((m) => ({ key: m.model, name: m.model, t: m }))} />
+            <SpendTable title="By project" label="project" rows={data.byProject.map((p) => ({ key: p.project ?? '', name: p.project ?? 'Unknown', t: p }))} />
+            {data.byProject.some((p) => p.project === null) && (
+              <p className="small muted">Unknown is spend from runs deleted before Workshop recorded their repository.</p>
+            )}
             <SpendTable title="By month" label="month" rows={data.byMonth.map((m) => ({ key: m.month, name: m.month, t: m }))} />
           </>
         )}

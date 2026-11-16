@@ -1,0 +1,68 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { all, initDb, MIGRATIONS, one, run } from '../src/db.ts';
+import { backfillSpend } from '../src/spend.ts';
+
+const spendOf = (id: string) => one<{ repo: string | null; agent: string | null; ticket: number | null }>('SELECT repo, agent, ticket FROM spend WHERE run_id = ?', id)!;
+const addRun = (id: string, ticket: number, usage: number | null) =>
+  run("INSERT INTO runs (id, ticket_id, agent, attempt, model, billing, status, input_tokens, started_at) VALUES (?, ?, 'design', 1, 'm', 'subscription', 'succeeded', ?, 5)", id, ticket, usage);
+
+let ticket: number;
+
+beforeAll(() => {
+  initDb(':memory:');
+  run("INSERT INTO connections (kind, provider, name, config, created_at, updated_at) VALUES ('vcs', 'github', 'g', '{}', 0, 0)");
+  const conn = one<{ id: number }>('SELECT id FROM connections')!.id;
+  run("INSERT INTO repos (vcs_connection_id, ticket_connection_id, full_name, default_branch, url, enabled) VALUES (?, ?, 'me/app', 'main', 'u', 1)", conn, conn);
+  const repo = one<{ id: number }>('SELECT id FROM repos')!.id;
+  ticket = Number(run("INSERT INTO tickets (repo_id, number, title, body, url, author, state, labels, updated_at) VALUES (?, 7, 't', '', 'u', 'me', 'open', '[]', '2026-10-13T00:00:00Z')", repo).lastInsertRowid);
+});
+
+describe('backfillSpend', () => {
+  it('fills known runs, leaves orphans, adds missing rows, and is idempotent', () => {
+    addRun('known', ticket, 10);
+    addRun('missing', ticket, 20);
+    addRun('nousage', ticket, null);
+    const spend = (id: string) => run("INSERT INTO spend (run_id, ts, model, billing, input_tokens, output_tokens, cost_usd) VALUES (?, 1, 'm', 'subscription', 1, 1, 1)", id);
+    spend('known');
+    spend('orphan');
+    expect(backfillSpend('main')).toEqual({ filled: 1, added: 1 });
+    expect(spendOf('known')).toEqual({ repo: 'me/app', agent: 'design', ticket: 7 });
+    expect(spendOf('orphan')).toEqual({ repo: null, agent: null, ticket: null });
+    expect(spendOf('missing')).toEqual({ repo: 'me/app', agent: 'design', ticket: 7 });
+    expect(all('SELECT id FROM spend WHERE run_id = ?', 'nousage')).toHaveLength(0);
+    expect(backfillSpend('main')).toEqual({ filled: 0, added: 0 });
+  });
+
+  it('recovers deleted runs from an attached older database', () => {
+    const file = path.join(process.env.DATA_DIR!, 'old.db');
+    fs.rmSync(file, { force: true });
+    const old = new DatabaseSync(file);
+    old.exec('PRAGMA foreign_keys = ON');
+    for (const m of MIGRATIONS.slice(0, -1)) old.exec(m);
+    old.exec("INSERT INTO connections (kind, provider, name, config, created_at, updated_at) VALUES ('vcs', 'github', 'g', '{}', 0, 0)");
+    old.exec("INSERT INTO repos (id, vcs_connection_id, ticket_connection_id, full_name, default_branch, url, enabled) VALUES (1, 1, 1, 'me/gone', 'main', 'u', 1)");
+    old.exec("INSERT INTO tickets (id, repo_id, number, title, body, url, author, state, labels, updated_at) VALUES (1, 1, 3, 't', '', 'u', 'me', 'open', '[]', 'x')");
+    const r = (id: string) =>
+      old.exec(`INSERT INTO runs (id, ticket_id, agent, attempt, model, billing, status, input_tokens, started_at) VALUES ('${id}', 1, 'implement', 1, 'm', 'subscription', 'succeeded', 5, 5)`);
+    r('deleted-orphan');
+    r('deleted-unrecorded');
+    old.close();
+
+    run("INSERT INTO spend (run_id, ts, model, billing, input_tokens, output_tokens, cost_usd) VALUES ('deleted-orphan', 1, 'm', 'subscription', 1, 1, 1)");
+    run('ATTACH DATABASE ? AS src', file);
+    try {
+      expect(backfillSpend('src')).toEqual({ filled: 1, added: 1 });
+    } finally {
+      run('DETACH DATABASE src');
+    }
+    expect(spendOf('deleted-orphan')).toEqual({ repo: 'me/gone', agent: 'implement', ticket: 3 });
+    expect(spendOf('deleted-unrecorded')).toEqual({ repo: 'me/gone', agent: 'implement', ticket: 3 });
+  });
+
+  it('refuses an unknown schema name', () => {
+    expect(() => backfillSpend('x; DROP' as 'main')).toThrow();
+  });
+});

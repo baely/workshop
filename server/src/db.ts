@@ -191,6 +191,16 @@ export const MIGRATIONS = [
   `ALTER TABLE runs ADD COLUMN image TEXT;`,
   // Usage warnings were wrongly recorded as limits; clear them (a real limit is re-recorded on the next run).
   `DELETE FROM allowance_samples WHERE source = 'limit';`,
+  // Record which repository, agent and ticket each ledger row belongs to, filled for runs that still exist.
+  `
+  ALTER TABLE spend ADD COLUMN repo TEXT; -- repos.full_name when recorded; NULL if unknown
+  ALTER TABLE spend ADD COLUMN agent TEXT;
+  ALTER TABLE spend ADD COLUMN ticket INTEGER; -- issue number in that repo
+  UPDATE spend SET repo = x.full_name, agent = x.agent, ticket = x.number
+    FROM (SELECT runs.id, repos.full_name, runs.agent, tickets.number
+          FROM runs JOIN tickets ON tickets.id = runs.ticket_id JOIN repos ON repos.id = tickets.repo_id) AS x
+    WHERE x.id = spend.run_id;
+  `,
 ];
 
 export let db: DatabaseSync;

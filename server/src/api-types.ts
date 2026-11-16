@@ -309,6 +309,8 @@ export interface LifetimeSpend {
   subscription: SpendTotals;
   api: SpendTotals;
   byModel: (SpendTotals & { model: string })[];
+  /** Repository `owner/name`; null for spend whose run was deleted before Workshop recorded it. Sorted by cost. */
+  byProject: (SpendTotals & { project: string | null })[];
   /** 'YYYY-MM' in the settings time zone, newest first. */
   byMonth: (SpendTotals & { month: string })[];
 }
