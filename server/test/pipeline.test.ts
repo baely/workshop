@@ -735,6 +735,21 @@ describe('sync', () => {
     expect(one<{ pr_status: string }>('SELECT pr_status FROM tickets WHERE id = 1')?.pr_status).toBe('merged');
   });
 
+  it('deletes the branch and any rescue branch after a merge, and still finishes if deleting fails', async () => {
+    const rescue = { branch: 'workshop/3-add-dark-mode-unmerged-abc', agent: 'implement', summary: 's' };
+    run('UPDATE tickets SET branch = ?, rescue = ?, labels = ? WHERE id = 1', 'workshop/3-add-dark-mode', JSON.stringify(rescue), JSON.stringify([label.size('s'), label.stage('merge')]));
+    fake.tickets.listChanged = async () => [];
+    fake.vcs.pullRequestState = async () => pr({ state: 'merged' });
+    fake.vcs.deleteBranch = vi.fn(async () => {
+      throw new Error('already gone');
+    });
+    await syncRepo(repo());
+    expect(fake.vcs.deleteBranch).toHaveBeenCalledWith(expect.anything(), 'workshop/3-add-dark-mode');
+    expect(fake.vcs.deleteBranch).toHaveBeenCalledWith(expect.anything(), rescue.branch);
+    expect(getTicket(1)!.rescue).toBeNull();
+    expect(one<{ state: string }>('SELECT state FROM tickets WHERE id = 1')?.state).toBe('closed');
+  });
+
   describe('when you close the issue', () => {
     const branch = 'workshop/3-add-dark-mode';
     beforeEach(() => {
@@ -767,7 +782,7 @@ describe('sync', () => {
       await syncRepo(repo());
       expect(one<{ pr_status: string }>('SELECT pr_status FROM tickets WHERE id = 1')?.pr_status).toBe('merged');
       expect(fake.vcs.closePullRequest).not.toHaveBeenCalled();
-      expect(fake.vcs.deleteBranch).not.toHaveBeenCalled();
+      expect(fake.vcs.deleteBranch).toHaveBeenCalledWith(expect.anything(), branch);
     });
 
     it('raises an alert and finishes the sync when the cleanup fails', async () => {

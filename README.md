@@ -25,7 +25,7 @@ Every few minutes Workshop reads open issues opened by you (or anyone else you l
 3. **Design review** (L and XL only). The Design adversary attacks the design and revises it.
 4. **Implement.** The Implementation agent writes the change and tests, and Workshop opens a pull request and asks for your review. On L and XL tickets the agent also runs an adversarial self-review before finishing.
 5. **Your review.**
-   - Approve, and Workshop merges the pull request (through GitHub, no tokens needed) and closes the issue. Only real merge conflicts need the Merge agent.
+   - Approve, and Workshop merges the pull request (through GitHub, no tokens needed), closes the issue and deletes the branch. Only real merge conflicts need the Merge agent.
    - Request changes, and the Classifier sizes just those changes and the pipeline runs again on the same branch.
 
 Any agent can stop and ask you a question as a comment on the issue. You answer, remove the `workshop/needs-info` label, and the same stage picks up where it left off.
