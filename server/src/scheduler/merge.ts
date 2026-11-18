@@ -7,13 +7,20 @@ import { label, moveTo } from '../workflow/labels.ts';
 
 const setPrStatus = (t: TicketRow, status: string) => run('UPDATE tickets SET pr_status = ? WHERE id = ?', status, t.id);
 
-/** PR merged (by Workshop or by you): close the ticket and clear Workshop's stage labels. */
+/** PR merged (by Workshop or by you): close the ticket, clear Workshop's stage labels and delete its branches. */
 export async function finishMerged(t: TicketRow) {
   const repo = getRepo(t.repo_id)!;
   if (t.state !== 'closed') await sourceFor(repo).close(repoRef(repo), t.number);
   await editLabels(t, [], [...moveTo(labelsOf(t), null).remove, label.running]);
   run("UPDATE tickets SET state = 'closed', pr_status = 'merged' WHERE id = ?", t.id);
   deleteMedia(t.id);
+  // The merge already succeeded, so a branch that won't delete (or is already gone) is only logged.
+  const vcs = vcsFor(repo);
+  const rescue = rescueOf(t);
+  for (const branch of [branchOf(t), rescue?.branch]) {
+    if (branch) await vcs.deleteBranch(repoRef(repo), branch).catch((err) => console.warn(`Couldn't delete ${branch}: ${(err as Error).message}`));
+  }
+  if (rescue) run('UPDATE tickets SET rescue = NULL WHERE id = ?', t.id);
 }
 
 /** You closed the pull request without merging: close the issue as not planned. Reopening it starts again. */

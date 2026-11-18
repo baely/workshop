@@ -76,7 +76,7 @@ Each sync checks every pull request waiting on you. Only a formal review counts 
 - **Changes requested:** `stage:reclassify`. The Classifier sizes just the requested changes, then the usual route runs on the same branch. Agents receive your review comments, with file and line. The Implementation agent comments on the existing pull request instead of opening a new one, and your review is requested again.
 - **Pull request closed without merging:** Workshop closes the issue as not planned and comments; reopen the issue to start again from classification.
 - **Issue closed by you:** Workshop stops any run, clears its labels, closes its open pull request and deletes the branch it created.
-- **Merged by you:** the ticket is closed and its stage cleared.
+- **Merged (by Workshop, the Merge agent or you):** the ticket is closed, its stage cleared, and its branch and any rescue branch are deleted. A branch that can't be deleted is logged and ignored.
 
 ## Merging
 
