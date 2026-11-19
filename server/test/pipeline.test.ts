@@ -493,6 +493,23 @@ describe('runner', () => {
     expect(fake.vcs.requestReview).toHaveBeenCalledWith(expect.anything(), 7, 'me');
   });
 
+  it('after a review, succeeds without new commits and sends the summary back for review', async () => {
+    run('UPDATE tickets SET pr_number = 7 WHERE id = 1');
+    fake.env = new FakeEnv({
+      prepare: ['ok'],
+      run: [result({ outcome: 'done', summary: 'Reran the tests as asked; no changes needed.', tests: 'gradle test: passed' })],
+      publish: [line({ before: 'bbb', after: 'bbb', ahead: 3 })],
+    });
+    expect((await settle(go())).status).toBe('succeeded');
+    expect(fake.vcs.openPullRequest).not.toHaveBeenCalled();
+    const body = fake.vcs.commentOnPullRequest.mock.calls[0][2] as string;
+    expect(body).toMatch(/^Reviewed again with no code changes\./);
+    expect(body).toContain('Reran the tests as asked');
+    expect(body).toContain('gradle test: passed');
+    expect(fake.vcs.requestReview).toHaveBeenCalledWith(expect.anything(), 7, 'me');
+    expect(JSON.parse(getTicket(1)!.labels)).toContain(label.stage('pr-review'));
+  });
+
   it('pauses (not fails) when the usage limit is hit, keeping the session for resume', async () => {
     fake.env = new FakeEnv({
       prepare: ['ok'],

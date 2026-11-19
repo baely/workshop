@@ -433,14 +433,16 @@ async function openOrUpdatePr(ctx: Ctx, t: TicketRow, result: WorkResult, pushed
   // Only a recorded PR means "update after review". One opened but never recorded (a retried request, a
   // restart) goes through openPullRequest, which takes it over.
   let number = t.pr_number;
-  // A new pull request needs commits on the branch; an update after review needs new ones. (Judging a
-  // new PR by "ahead" also covers a restart between pushing and opening the PR, when nothing is new.)
-  if (number ? pushed.before === pushed.after : !pushed.ahead) throw new Error('The implementation agent finished without committing any changes.');
+  // A new pull request needs commits on the branch. (Judging it by "ahead" also covers a restart between
+  // pushing and opening the PR, when nothing is new.) After a review, no new commits is a valid answer:
+  // the review may only ask to re-run the tests or explain something, so the summary goes to the reviewer.
+  if (!number && !pushed.ahead) throw new Error('The implementation agent finished without committing any changes.');
   let url = t.pr_url;
   const shots = screenshotsLine(listMedia(t.id).filter((m) => m.run_id === mediaRunId), config.publicUrl, t.id);
   const screenshots = shots ? `\n\n${shots}` : '';
   if (number) {
-    await vcs.commentOnPullRequest(repo, number, `Updated after review.\n\n${result.summary}${tests}${screenshots}`);
+    const head = pushed.before === pushed.after ? 'Reviewed again with no code changes.' : 'Updated after review.';
+    await vcs.commentOnPullRequest(repo, number, `${head}\n\n${result.summary}${tests}${screenshots}`);
   } else {
     const size = parseLabels(labelsOf(t)).size;
     const design = size === 'm' || size === 'l' || size === 'xl' ? `\n\n**Design:** [\`${docPathOf(t)}\`](${vcs.fileUrl(repo, branch, docPathOf(t))})` : '';
