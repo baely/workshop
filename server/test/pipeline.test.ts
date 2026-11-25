@@ -1175,7 +1175,7 @@ describe('code review', () => {
     expect(fake.vcs.openPullRequest).not.toHaveBeenCalled();
     expect(ticketLabels()).toContain(label.stage('implement'));
     expect(ticketLabels()).not.toContain(label.stage('code-review'));
-    expect(JSON.parse(getTicket(1)!.rework!)).toEqual({ count: 1, findings: [severe()] });
+    expect(JSON.parse(getTicket(1)!.rework!)).toEqual({ count: 1, findings: [severe()], handoffRunId: expect.any(String) });
     expect(fake.tickets.comment).toHaveBeenCalledWith(expect.anything(), 3, expect.stringMatching(/sends this ticket back to implementation[\s\S]*Toggle crashes/));
 
     const fix = await implement('Added a dark theme, with a guarded toggle.', { before: 'bbb', after: 'ccc', ahead: 2 });
@@ -1228,19 +1228,28 @@ describe('code review', () => {
     expect(fake.vcs.commentOnPullRequest.mock.calls[0][2]).toMatch(/^Updated after review\.\n\nRenamed it; nothing else needed\./);
   });
 
-  it('retries a review whose label edit failed after storing the rework, and then opens the pull request instead of sending it back again', async () => {
+  it('retries a review whose label edit failed after storing the rework by sending it back again, without using up the rework', async () => {
     await implement('Added a dark theme.');
+    // A GitHub 5xx with an empty body: Octokit's error has no message.
+    const blip = Object.assign(new Error(''), { status: 502 });
     fake.tickets.setLabels.mockImplementation(async (_repo: unknown, _n: number, add: string[]) => {
-      if (add.includes(label.stage('implement'))) throw new Error('GitHub is down');
+      if (add.includes(label.stage('implement'))) throw blip;
     });
     const first = await review([severe()]);
-    expect(first.r).toMatchObject({ status: 'failed', error: expect.stringContaining('GitHub is down') });
+    expect(first.r).toMatchObject({ status: 'failed', error: 'GitHub answered HTTP 502 with no message.' });
     expect(ticketLabels()).toContain(label.stage('code-review'));
     expect(JSON.parse(getTicket(1)!.rework!)).toMatchObject({ count: 1 });
-    expect(getTicket(1)!.handoff).not.toBeNull();
+    fake.tickets.setLabels.mockImplementation(async () => {});
 
     await review([severe()]);
-    expect(fake.vcs.openPullRequest.mock.calls[0][1].body).toMatch(/still found severe problems[\s\S]*Added a dark theme\./);
+    expect(fake.vcs.openPullRequest).not.toHaveBeenCalled();
+    expect(ticketLabels()).toContain(label.stage('implement'));
+    expect(JSON.parse(getTicket(1)!.rework!)).toMatchObject({ count: 1 });
+    expect(fake.tickets.comment).toHaveBeenCalledWith(expect.anything(), 3, expect.stringContaining('rework 1 of 1'));
+
+    await implement('Added a dark theme, with a guarded toggle.', { before: 'bbb', after: 'ccc', ahead: 2 });
+    await review([severe()]);
+    expect(fake.vcs.openPullRequest.mock.calls[0][1].body).toMatch(/still found severe problems[\s\S]*with a guarded toggle\./);
     expect(ticketLabels()).toContain(label.stage('pr-review'));
   });
 

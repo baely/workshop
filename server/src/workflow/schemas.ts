@@ -47,6 +47,8 @@ export type AgentResult = ClassifierResult | WorkResult | ReviewResult;
 export interface Rework {
   count: number;
   findings: Finding[];
+  /** The handoff the review that sent it back saw. While it's still the current one, the rework hasn't happened. */
+  handoffRunId?: string;
 }
 
 /** `tickets.handoff`: the Implementation result the pull request describes, kept until it opens. */

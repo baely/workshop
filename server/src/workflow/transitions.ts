@@ -50,6 +50,8 @@ export interface PlanContext {
   rescue?: Rescue;
   /** Automatic reworks this review round, and the findings being fixed. */
   rework: Rework | null;
+  /** The run id of the ticket's current handoff, if it has one. */
+  handoffRunId?: string;
   /** The repository merges pull requests without waiting for an approval. */
   mergeWithoutReview: boolean;
 }
@@ -155,13 +157,15 @@ export function planTransition(ctx: PlanContext, result: AgentResult): Plan {
 function planReview(ctx: PlanContext, r: ReviewResult): Plan {
   const findings = r.findings ?? [];
   const target = stageForRework(ctx.state.size, findings);
-  const count = ctx.rework?.count ?? 0;
+  // A send-back whose publish failed (say, GitHub errored after the rework was stored) left no new handoff: don't count it.
+  const pending = ctx.rework?.handoffRunId !== undefined && ctx.rework.handoffRunId === ctx.handoffRunId;
+  const count = (ctx.rework?.count ?? 0) - (pending ? 1 : 0);
   if (target && count < MAX_REWORKS) {
     const severe = findings.filter((f) => f.severity === 'severe');
     const where = NEXT_TEXT[target];
     return {
       ...moveTo(ctx.labels, target),
-      rework: { count: count + 1, findings: severe },
+      rework: { count: count + 1, findings: severe, handoffRunId: ctx.handoffRunId },
       comment: [
         `Code review found ${problems(severe.length)}, so Workshop sends this ticket back to ${where} (rework ${count + 1} of ${MAX_REWORKS}):`,
         formatFindings(severe),

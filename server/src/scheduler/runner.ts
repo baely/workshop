@@ -584,6 +584,7 @@ async function publishRun(ctx: Ctx) {
       docUrl: vcs.fileUrl(repo, branch, docPath),
       rescue: rescueOf(t) ?? undefined,
       rework,
+      handoffRunId: handoffOf(t)?.runId,
       mergeWithoutReview: Boolean(ctx.repo.merge_without_review),
     },
     result,
@@ -666,8 +667,9 @@ async function publishRun(ctx: Ctx) {
     // Without a handoff (the ticket was moved to code review by hand), the reviewer's summary describes the work.
     await openOrUpdatePr(ctx, t, handoffOf(t) ?? { runId: r.id, result: result as WorkResult }, plan.reviewNotes, plan.flagged);
   }
-  // A rework is stored before the label edit, and cleared only once everything else is done: either way, a
-  // retry after a partial failure opens the pull request rather than sending the ticket back again.
+  // A rework is stored before the label edit, and cleared only once everything else is done. A retry after a
+  // partial failure sends the ticket back again (planReview doesn't count a rework with no new handoff), and
+  // an exhausted one opens the pull request rather than sending it back.
   if (plan.rework) run('UPDATE tickets SET rework = ? WHERE id = ?', JSON.stringify(plan.rework), t.id);
   if (plan.deleteBranch) await vcs.deleteBranch(repo, plan.deleteBranch).catch((err) => warn(r.id, `Workshop couldn't delete ${plan.deleteBranch}: ${(err as Error).message}`));
   if (plan.clearRescue) run('UPDATE tickets SET rescue = NULL WHERE id = ?', t.id);
@@ -720,7 +722,9 @@ export async function drive(runId: string) {
       return;
     }
     console.error(`[run ${runId}]`, err);
-    await fail(runId, (err as Error).message);
+    // Octokit uses the response body as the message, so a 5xx with an empty body has none.
+    const { message, status } = err as Error & { status?: number };
+    await fail(runId, message || (status ? `GitHub answered HTTP ${status} with no message.` : String(err)));
   } finally {
     driving.delete(runId);
     settled();
