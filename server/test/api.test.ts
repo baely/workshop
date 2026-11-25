@@ -500,6 +500,29 @@ describe('agent host availability', () => {
   });
 });
 
+describe('AI model order', () => {
+  it('puts Claude connections in your order and refuses an incomplete list', async () => {
+    const { run, all } = await import('../src/db.ts');
+    const add = (name: string, position: number) =>
+      Number(run("INSERT INTO connections (kind, provider, name, config, secret, status, created_at, updated_at, position) VALUES ('model', 'anthropic', ?, '{}', '', 'ok', 0, 0, ?)", name, position).lastInsertRowid);
+    const ids = all<{ id: number }>("SELECT id FROM connections WHERE kind = 'model'").map((r) => r.id);
+    const a = add('First', 100);
+    const b = add('Second', 101);
+    const put = (body: object) => request(app).put('/api/connections/order').set('cookie', cookie).send(body);
+    const names = async () => ((await request(app).get('/api/connections').set('cookie', cookie)).body as { kind: string; name: string }[]).filter((c) => c.kind === 'model').map((c) => c.name);
+
+    expect((await names()).slice(-2)).toEqual(['First', 'Second']);
+    expect((await put({ ids: [b, a, ...ids] })).status).toBe(200);
+    expect((await names()).slice(0, 2)).toEqual(['Second', 'First']);
+    for (const bad of [[b], [b, a, a, ...ids], [b, a, 9999, ...ids], 'x']) {
+      const res = await put({ ids: bad });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('List every AI model connection exactly once.');
+    }
+    run('DELETE FROM connections WHERE id IN (?, ?)', a, b);
+  });
+});
+
 describe("changing a ticket's status", () => {
   const put = (id: number | string, body: object) => request(app).put(`/api/tickets/${id}/state`).set('cookie', cookie).send(body);
   const labelsIn = (id: number) => JSON.parse(one<{ labels: string }>('SELECT labels FROM tickets WHERE id = ?', id)!.labels) as string[];

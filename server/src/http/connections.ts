@@ -14,13 +14,14 @@ import {
   modelsOf,
   PROVIDERS,
   providerInfo,
+  reorderConnections,
   setConnectionStatus,
   toView,
   updateConnection,
   vcsOf,
   type Connection,
 } from '../providers/index.ts';
-import { kick, probeAllowance, syncSoon } from '../scheduler/loop.ts';
+import { forgetProbe, kick, probeAllowance, syncSoon } from '../scheduler/loop.ts';
 import { mergeWithoutReviewVerdict, UNCHECKED_TAIL } from '../scheduler/merge.ts';
 import { getSettings, getValue, saveSettings, setValue } from '../settings.ts';
 import { repoRef, repoView, sourceFor, vcsFor, type RepoRow } from '../tickets.ts';
@@ -144,6 +145,19 @@ connectionsRouter.post('/connections', async (req, res) => {
   res.json({ connection: toView(getConnection(id)!), test });
 });
 
+/** Your order of Claude connections: subscription agents use the first subscription that isn't blocked. */
+connectionsRouter.put('/connections/order', (req, res) => {
+  const ids = req.body?.ids;
+  const current = listConnections('model').map((c) => c.id);
+  check(
+    Array.isArray(ids) && ids.length === current.length && new Set(ids).size === ids.length && current.every((id) => ids.includes(id)),
+    'List every AI model connection exactly once.',
+  );
+  reorderConnections(ids);
+  kick();
+  res.json(listConnections().map(toView));
+});
+
 connectionsRouter.put('/connections/:id', async (req, res) => {
   const conn = getConnection(Number(req.params.id));
   check(conn, 'Connection not found.', 404);
@@ -162,6 +176,7 @@ connectionsRouter.delete('/connections/:id', (req, res) => {
   );
   check(!busy, 'An agent run is using this connection. Stop it first.', 409);
   run('DELETE FROM connections WHERE id = ?', id);
+  forgetProbe(id);
   publish('connections');
   publish('repos');
   res.json({ ok: true });

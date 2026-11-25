@@ -71,6 +71,18 @@ export function thresholdBlock(
   return null;
 }
 
+/**
+ * Which subscription a launch uses: the first in your order that isn't blocked. One that's still being checked is waited
+ * for, unless its last check failed, so a broken token doesn't hold up the rest. With none free, the first one's reason stands.
+ */
+export function pickSubscription(pool: { id: number; block: string | null; failing: boolean }[]): { id: number; block: string | null } | null {
+  for (const c of pool) {
+    if (!c.block) return { id: c.id, block: null };
+    if (c.block === 'Checking allowance' && !c.failing) return { id: c.id, block: c.block };
+  }
+  return pool[0] ? { id: pool[0].id, block: pool[0].block } : null;
+}
+
 export function apiCapBlock(spentTodayUsd: number, s: Settings): string | null {
   return spentTodayUsd >= s.apiDailyCapUsd ? `API spend today $${spentTodayUsd.toFixed(2)} reached the $${s.apiDailyCapUsd} daily cap` : null;
 }

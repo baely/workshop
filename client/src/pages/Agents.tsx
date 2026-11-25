@@ -86,6 +86,7 @@ function AgentForm({ agent, models }: { agent: AgentClassView; models: ModelOpti
                 {selected.connectionName} has no {draft.billing === 'api' ? 'API key' : 'subscription token'}.
               </span>
             )}
+            {draft.billing === 'subscription' && <span className="help">Uses the first subscription in your order on the Connections page that isn't over your limits.</span>}
           </div>
           <label className="field">
             <span>Max turns</span>

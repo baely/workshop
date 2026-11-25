@@ -9,7 +9,7 @@ const SECTIONS: { kind: ConnectionKind; title: string; blurb: string }[] = [
   { kind: 'vcs', title: 'Code host', blurb: 'Where your code lives. Workshop acts through its own GitHub App.' },
   { kind: 'tickets', title: 'Tickets', blurb: 'Where Workshop finds work to do.' },
   { kind: 'environment', title: 'Agent hosts', blurb: 'Machines with Docker where agent containers run.' },
-  { kind: 'model', title: 'AI models', blurb: 'Claude, through your subscription, an API key, or both.' },
+  { kind: 'model', title: 'AI models', blurb: 'Claude, through your subscription, an API key, or both. Subscription agents use the first subscription in this list that isn\'t over your limits, moving down the list when it is.' },
 ];
 
 const BANNERS: Record<string, { tone: string; text: string }> = {
@@ -172,7 +172,8 @@ function Installations({ connection }: { connection: ConnectionView }) {
   );
 }
 
-function ConnectionItem({ c, provider, onEdit, extra }: { c: ConnectionView; provider: ProviderInfo; onEdit: () => void; extra?: ReactNode }) {
+function ConnectionItem(props: { c: ConnectionView; provider: ProviderInfo; onEdit: () => void; extra?: ReactNode; rank?: number; onMove?: (by: -1 | 1) => Promise<unknown>; last?: boolean }) {
+  const { c, provider, onEdit, extra, rank, onMove, last } = props;
   const [test, setTest] = useState<TestResult | null>(null);
   const [busy, setBusy] = useState(false);
   const check = () => {
@@ -202,7 +203,10 @@ function ConnectionItem({ c, provider, onEdit, extra }: { c: ConnectionView; pro
   return (
     <li className="stack" style={{ gap: 8 }}>
       <div className="spread">
-        <strong>{c.name}</strong>
+        <strong>
+          {rank !== undefined && <span className="muted">{rank + 1}. </span>}
+          {c.name}
+        </strong>
         <Status tone={c.status === 'ok' ? 'ok' : c.status === 'error' ? 'error' : 'idle'}>{c.status === 'ok' ? 'Working' : c.status === 'error' ? 'Not working' : 'Not checked yet'}</Status>
       </div>
       {isHost && !available && <span className="small muted">Switched off: no new agents start here. Running agents carry on.</span>}
@@ -219,6 +223,16 @@ function ConnectionItem({ c, provider, onEdit, extra }: { c: ConnectionView; pro
           <button onClick={toggle} disabled={toggling}>
             {available ? 'Switch off' : 'Switch on'}
           </button>
+        )}
+        {onMove && (
+          <>
+            <button onClick={() => onMove(-1).catch((e: Error) => setTest({ ok: false, message: e.message }))} disabled={rank === 0}>
+              Move up
+            </button>
+            <button onClick={() => onMove(1).catch((e: Error) => setTest({ ok: false, message: e.message }))} disabled={last}>
+              Move down
+            </button>
+          </>
         )}
         <button onClick={onEdit}>Edit</button>
         <button className="danger" onClick={remove}>
@@ -422,6 +436,11 @@ export function Connections() {
 
   const banner = params.get('error') ? { tone: 'error', text: params.get('error')! } : BANNERS[params.get('github') ?? ''];
   const providerFor = (id: string) => providers.find((p) => p.id === id)!;
+  const move = (items: ConnectionView[], i: number, by: -1 | 1) => {
+    const ids = items.map((c) => c.id);
+    [ids[i], ids[i + by]] = [ids[i + by], ids[i]];
+    return api('/connections/order', { method: 'PUT', body: { ids } });
+  };
 
   return (
     <div className="stack">
@@ -454,10 +473,11 @@ export function Connections() {
               <GitHubSetup onExisting={() => setEditing({ provider: providerFor('github') })} />
             ) : items.length ? (
               <ul className="list">
-                {items.map((c) => (
+                {items.map((c, i) => (
                   <ConnectionItem
                     key={c.id}
                     c={c}
+                    {...(section.kind === 'model' && items.length > 1 ? { rank: i, last: i === items.length - 1, onMove: (by: -1 | 1) => move(items, i, by) } : {})}
                     provider={providerFor(c.provider)}
                     onEdit={() => setEditing({ provider: providerFor(c.provider), connection: c })}
                     extra={c.provider === 'github' ? <Installations connection={c} /> : undefined}

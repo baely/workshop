@@ -59,7 +59,7 @@ export function getConnection<C = Record<string, unknown>, S = Record<string, st
 }
 
 export function listConnections(kind?: ConnectionKind): Connection[] {
-  const rows = kind ? all<Row>('SELECT * FROM connections WHERE kind = ? ORDER BY id', kind) : all<Row>('SELECT * FROM connections ORDER BY id');
+  const rows = kind ? all<Row>('SELECT * FROM connections WHERE kind = ? ORDER BY position, id', kind) : all<Row>('SELECT * FROM connections ORDER BY position, id');
   return rows.map(fromRow);
 }
 
@@ -72,7 +72,8 @@ export function toView(c: Connection): ConnectionView {
 export function createConnection(kind: ConnectionKind, provider: string, name: string, config: object, secret: object): number {
   const now = Date.now();
   const result = run(
-    'INSERT INTO connections (kind, provider, name, config, secret, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    // New connections go last in your order.
+    'INSERT INTO connections (kind, provider, name, config, secret, created_at, updated_at, position) VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM connections))',
     kind,
     provider,
     name,
@@ -83,6 +84,12 @@ export function createConnection(kind: ConnectionKind, provider: string, name: s
   );
   publish('connections');
   return Number(result.lastInsertRowid);
+}
+
+/** Puts connections in the given order (first is preferred). The caller checks they're every connection of one kind. */
+export function reorderConnections(ids: number[]) {
+  ids.forEach((id, i) => run('UPDATE connections SET position = ? WHERE id = ?', i + 1, id));
+  publish('connections');
 }
 
 /** Merges config; secret keys that are omitted keep their stored value. */

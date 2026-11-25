@@ -14,7 +14,7 @@ import { getSettings } from '../settings.ts';
 import { activeRunId, blockersOf, getRepo, getTicket, isAllowedAuthor, labelsOf, setPrioritised, setPush, ticketInScope, type RepoRow, type TicketRow } from '../tickets.ts';
 import { nextStep, parseLabels } from '../workflow/labels.ts';
 import { AGENT_INFO } from '../workflow/prompts.ts';
-import { allowanceBlock, apiCapBlock, clockTopics, dependencyBlock, inScope, isUnclassified, localTime, modeBlock, pickHost, priorityBlock, pushEnded, stepPriority, withinHours, type ClockState, type HostLoad } from './gates.ts';
+import { allowanceBlock, apiCapBlock, pickSubscription, clockTopics, dependencyBlock, inScope, isUnclassified, localTime, modeBlock, pickHost, priorityBlock, pushEnded, stepPriority, withinHours, type ClockState, type HostLoad } from './gates.ts';
 import { advanceMerge } from './merge.ts';
 import { cancelPause, drive, isDriving, launch, onRunSettled, resume } from './runner.ts';
 import { syncRepo } from './sync.ts';
@@ -292,6 +292,10 @@ export function buildQueue(s: Settings = getSettings(), now = Date.now(), opts: 
   const waiting = rows
     .filter((t) => isAllowedAuthor(t.author) && ticketInScope(t, repos.get(t.repo_id)!) && isUnclassified(labelsOf(t), true, blockersOf(t)))
     .map((t) => ({ repo: repos.get(t.repo_id)!.full_name, priority: repos.get(t.repo_id)!.priority }));
+  // Every Claude subscription in your order, with what holds it back.
+  const subscriptions = listConnections('model')
+    .filter((c) => modelsOf(c).billing().includes('subscription'))
+    .map((c) => ({ id: c.id, provider: c.provider, block: allowanceBlock(allowanceOf(c.id), s, now), failing: probeFailing(c.id, now) }));
   const out: (Candidate & { priority: number; repoPriority: number })[] = [];
   for (const t of rows) {
     const repo = repos.get(t.repo_id)!;
@@ -310,9 +314,15 @@ export function buildQueue(s: Settings = getSettings(), now = Date.now(), opts: 
     if (!blockedBy && !modelsOf(conn!).billing().includes(cls.billing)) {
       blockedBy = `${conn!.name} has no ${cls.billing === 'api' ? 'API key' : 'subscription token'} for ${name}`;
     }
-    if (!blockedBy) blockedBy = cls.billing === 'api' ? apiCapBlock(spentToday, s) : allowanceBlock(allowanceOf(conn!.id), s, now);
+    let useConnection = conn;
+    if (!blockedBy && cls.billing === 'api') blockedBy = apiCapBlock(spentToday, s);
+    else if (!blockedBy) {
+      const pick = pickSubscription(subscriptions.filter((c) => c.provider === conn!.provider))!; // the agent's own connection is in the pool
+      useConnection = getConnection(pick.id);
+      blockedBy = pick.block;
+    }
     if (!blockedBy && hostId === null) blockedBy = hosts.length ? 'Every agent host is busy or offline' : 'No agent hosts connected';
-    out.push({ ticket: t, repo, agent, mode, blockedBy, hostId, modelConnectionId: conn?.id ?? null, model: cls.model, billing: cls.billing, pushed: Boolean(t.push), prioritised: Boolean(t.prioritised), priority: stepPriority(step), repoPriority: repo.priority });
+    out.push({ ticket: t, repo, agent, mode, blockedBy, hostId, modelConnectionId: useConnection?.id ?? null, model: cls.model, billing: cls.billing, pushed: Boolean(t.push), prioritised: Boolean(t.prioritised), priority: stepPriority(step), repoPriority: repo.priority });
   }
   // The sort is stable, so the ticket order setting (from the query) decides ties.
   return out.sort((a, b) => Number(b.pushed) - Number(a.pushed) || Number(b.prioritised) - Number(a.prioritised) || b.repoPriority - a.repoPriority || a.priority - b.priority);
@@ -335,9 +345,15 @@ export function queueView(): QueueItem[] {
  * `claude -p` with a tiny prompt, whose first API response reports both windows. Agent runs report
  * the same thing for free, so this only runs when no recent reading exists. Fails closed.
  */
+/** A removed connection's id can be reused, so its failed check mustn't carry over. */
+export const forgetProbe = (connectionId: number) => probeFailedAt.delete(connectionId);
+
+/** The last allowance check of this connection failed less than 10 minutes ago. */
+const probeFailing = (connectionId: number, now: number) => now - (probeFailedAt.get(connectionId) ?? 0) < 10 * 60_000;
+
 export async function probeAllowance(connectionId: number, force = false) {
   if (probing.has(connectionId)) return;
-  if (!force && Date.now() - (probeFailedAt.get(connectionId) ?? 0) < 10 * 60_000) return;
+  if (!force && probeFailing(connectionId, Date.now())) return;
   const conn = getConnection(connectionId);
   if (!conn?.secret.oauthToken) throw new Error('This Claude connection has no subscription token.');
   const hosts = listConnections('environment');

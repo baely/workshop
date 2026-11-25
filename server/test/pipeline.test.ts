@@ -19,12 +19,12 @@ const { allowanceOf, recordProbe } = await import('../src/allowance.ts');
 const { config } = await import('../src/config.ts');
 const { initCrypto } = await import('../src/crypto.ts');
 const { all, initDb, one, run } = await import('../src/db.ts');
-const { createConnection, setConnectionStatus } = await import('../src/providers/index.ts');
+const { createConnection, reorderConnections, setConnectionStatus } = await import('../src/providers/index.ts');
 const { bus } = await import('../src/events.ts');
 const { activity, getRun, readLog } = await import('../src/runs.ts');
 const { sweepMedia } = await import('../src/media.ts');
 const { launch, PAUSE_GRACE_MS, requestPause, resume } = await import('../src/scheduler/runner.ts');
-const { buildQueue, hostLoads, launchNow, mergeApproved, probeAllowance, resumeNow, resumePaused, settleManual } = await import('../src/scheduler/loop.ts');
+const { buildQueue, forgetProbe, hostLoads, launchNow, mergeApproved, probeAllowance, resumeNow, resumePaused, settleManual } = await import('../src/scheduler/loop.ts');
 const { setPrioritised, setPush, getTicket, ticketView, getRepo } = await import('../src/tickets.ts');
 const { syncRepo } = await import('../src/scheduler/sync.ts');
 const { getSettings, saveSettings } = await import('../src/settings.ts');
@@ -934,6 +934,7 @@ describe('runner', () => {
       expect(await probeAllowance(other, true)).toEqual({ fiveHour: null, sevenDay: null });
       expect(allowanceOf(other)).toMatchObject({ unknown: true, fiveHour: null, sevenDay: null, tokens: { fiveHour: 100, sevenDay: 120 } });
       expect(allowanceOf(other).sampledAt).not.toBeNull();
+      run('DELETE FROM connections WHERE id = ?', other);
     });
 
     it('still fails when Claude Code errors', async () => {
@@ -941,6 +942,8 @@ describe('runner', () => {
       const other = createConnection('model', 'anthropic', 'Claude 3', {}, { oauthToken: 'sk-ant-oat01-three' });
       await expect(probeAllowance(other, true)).rejects.toThrow('Invalid bearer token');
       expect(allowanceOf(other)).toMatchObject({ unknown: false, sampledAt: null });
+      run('DELETE FROM connections WHERE id = ?', other);
+      forgetProbe(other);
     });
 
     it('reports known usage as known', async () => {
@@ -1064,6 +1067,50 @@ describe('launchNow', () => {
     } finally {
       run('DELETE FROM tickets WHERE number = 2');
     }
+  });
+});
+
+describe('subscription order', () => {
+  const pick = () => buildQueue().find((c) => c.ticket.id === 1)!;
+  const reading = (conn: number, pct: number) => recordProbe(conn, { pct, resetsAt: Date.now() + 3600_000 }, { pct: 10, resetsAt: Date.now() + 86400_000 });
+  let second: number;
+
+  beforeEach(() => {
+    saveSettings({ mode: 'always' });
+    setConnectionStatus(ids.env, 'ok');
+    fake.env = new FakeEnv({});
+    updateAgent('implement', { model: 'claude-sonnet-5-5', modelConnectionId: ids.model, billing: 'subscription' });
+    second = createConnection('model', 'anthropic', 'Claude 2', {}, { oauthToken: 'sk-ant-oat01-two' });
+  });
+  afterEach(() => {
+    run('DELETE FROM connections WHERE id = ?', second);
+    run('DELETE FROM allowance_samples');
+  });
+
+  it('uses the first subscription in your order, and the next when it is over your limits', () => {
+    reading(ids.model, 10);
+    reading(second, 10);
+    expect(pick()).toMatchObject({ modelConnectionId: ids.model, blockedBy: null });
+    reading(ids.model, 99);
+    expect(pick()).toMatchObject({ modelConnectionId: second, blockedBy: null });
+    reorderConnections([second, ids.model]);
+    reading(ids.model, 10);
+    expect(pick()).toMatchObject({ modelConnectionId: second, blockedBy: null });
+    reorderConnections([ids.model, second]);
+  });
+
+  it('waits for a higher-ranked subscription that is still being checked, and gives the first reason when all are held', () => {
+    reading(ids.model, 99);
+    expect(pick()).toMatchObject({ modelConnectionId: second, blockedBy: 'Checking allowance' });
+    reading(second, 99);
+    expect(pick()).toMatchObject({ modelConnectionId: ids.model });
+    expect(pick().blockedBy).toMatch(/^5-hour allowance at 99%/);
+  });
+
+  it('uses a subscription with unknown usage in its place', () => {
+    reading(ids.model, 99);
+    recordProbe(second, null, null);
+    expect(pick()).toMatchObject({ modelConnectionId: second, blockedBy: null });
   });
 });
 

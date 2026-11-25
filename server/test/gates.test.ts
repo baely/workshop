@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AllowanceView, Settings } from '../src/api-types.ts';
 import { DEFAULT_SETTINGS } from '../src/settings.ts';
-import { allowanceBlock, clockTopics, thresholdBlock, dependencyBlock, inScope, isUnclassified, modeBlock, priorityBlock, pickHost, pushEnded, pushRefusal, stepPriority, withinHours } from '../src/scheduler/gates.ts';
+import { allowanceBlock, clockTopics, thresholdBlock, dependencyBlock, inScope, isUnclassified, modeBlock, priorityBlock, pickHost, pickSubscription, pushEnded, pushRefusal, stepPriority, withinHours } from '../src/scheduler/gates.ts';
 
 const s = (over: Partial<Settings> = {}): Settings => ({ ...DEFAULT_SETTINGS, timezone: 'Australia/Melbourne', ...over });
 // 2026-10-13 is a Tuesday. Melbourne is UTC+11 (daylight time) on that date.
@@ -197,5 +197,22 @@ describe('clock topics', () => {
     expect(clockTopics(base, { ...base, blocks: '[[1,null]]' })).toEqual(['allowance']);
     expect(clockTopics(base, { ...base, queue: '[[1,"x"]]' })).toEqual(['tickets']);
     expect(clockTopics(base, { withinHours: false, blocks: 'a', queue: 'b' })).toEqual(['settings', 'allowance', 'tickets']);
+  });
+});
+
+describe('pickSubscription', () => {
+  const c = (id: number, block: string | null, failing = false) => ({ id, block, failing });
+  it('takes the first one in order that is free', () => {
+    expect(pickSubscription([c(1, '5-hour allowance at 99%'), c(2, null), c(3, null)])).toEqual({ id: 2, block: null });
+  });
+  it('waits on one still being checked rather than skipping it', () => {
+    expect(pickSubscription([c(1, 'Checking allowance'), c(2, null)])).toEqual({ id: 1, block: 'Checking allowance' });
+  });
+  it('skips one whose last check failed', () => {
+    expect(pickSubscription([c(1, 'Checking allowance', true), c(2, null)])).toEqual({ id: 2, block: null });
+  });
+  it("gives the first one's reason when none is free, and nothing for an empty pool", () => {
+    expect(pickSubscription([c(1, 'Weekly allowance at 95%'), c(2, 'Checking allowance', true)])).toEqual({ id: 1, block: 'Weekly allowance at 95%' });
+    expect(pickSubscription([])).toBeNull();
   });
 });

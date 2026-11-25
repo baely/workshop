@@ -218,6 +218,11 @@ export const MIGRATIONS = [
     WHERE x.run_id = spend.run_id;
   CREATE INDEX spend_connection ON spend (connection_id, ts);
   `,
+  // Your order of connections of the same kind; subscription agents use the first Claude subscription that isn't blocked.
+  `
+  ALTER TABLE connections ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
+  UPDATE connections SET position = id;
+  `,
 ];
 
 export let db: DatabaseSync;
