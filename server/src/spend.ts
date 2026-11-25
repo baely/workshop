@@ -8,8 +8,9 @@ export function recordSpend(r: RunRow, res: { inputTokens?: number; outputTokens
   const output = res.outputTokens ?? 0;
   const cost = res.costUsd ?? 0;
   const where = one<{ full_name: string; number: number }>('SELECT repos.full_name, tickets.number FROM tickets JOIN repos ON repos.id = tickets.repo_id WHERE tickets.id = ?', r.ticket_id);
+  const conn = r.model_connection_id === null ? undefined : one<{ name: string }>('SELECT name FROM connections WHERE id = ?', r.model_connection_id);
   run(
-    'INSERT INTO spend (run_id, ts, model, billing, input_tokens, output_tokens, cost_usd, repo, agent, ticket) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO spend (run_id, ts, model, billing, input_tokens, output_tokens, cost_usd, repo, agent, ticket, connection_id, connection) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     r.id,
     Date.now(),
     r.model,
@@ -20,6 +21,8 @@ export function recordSpend(r: RunRow, res: { inputTokens?: number; outputTokens
     where?.full_name ?? null,
     r.agent,
     where?.number ?? null,
+    conn ? r.model_connection_id : null,
+    conn?.name ?? null,
   );
   run(
     'UPDATE runs SET input_tokens = COALESCE(input_tokens, 0) + ?, output_tokens = COALESCE(output_tokens, 0) + ?, cost_usd = COALESCE(cost_usd, 0) + ? WHERE id = ?',
@@ -42,6 +45,9 @@ export interface SpendRow {
   repo: string | null;
   agent: string | null;
   ticket: number | null;
+  connection_id: number | null;
+  /** The connection's name when recorded. */
+  connection: string | null;
 }
 
 const zero = (): SpendTotals => ({ runs: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 });
@@ -71,8 +77,19 @@ const dimensions = (timeZone: string) => {
     model: (row: SpendRow) => row.model,
     month: (row: SpendRow) => fmt.format(row.ts).slice(0, 7),
     project: (row: SpendRow) => row.repo,
+    // A connection can hold a subscription token and an API key; each is its own account on Anthropic's side.
+    connection: (row: SpendRow) => `${row.connection_id ?? ''}:${row.billing}`,
   };
 };
+
+/** Labels a connection's totals with its current name, or the latest recorded one if it was removed. */
+function connectionTotals(key: string, rows: SpendRow[], t: SpendTotals) {
+  const [id, billing] = key.split(':');
+  if (!id) return { connectionId: null, connection: null, billing, ...t };
+  const current = one<{ name: string }>('SELECT name FROM connections WHERE id = ?', Number(id));
+  const recorded = rows.findLast((r) => String(r.connection_id) === id)?.connection ?? null;
+  return { connectionId: Number(id), connection: current?.name ?? recorded, billing, ...t };
+}
 
 export function lifetimeSpend(timeZone: string): LifetimeSpend {
   const rows = all<SpendRow>('SELECT * FROM spend ORDER BY ts, id');
@@ -86,6 +103,7 @@ export function lifetimeSpend(timeZone: string): LifetimeSpend {
     api: totals(rows.filter((r) => r.billing === 'api')),
     byModel: [...groupBy(rows, DIMENSIONS.model)].map(([model, t]) => ({ model: model!, ...t })).sort(byCost),
     byProject: [...groupBy(rows, DIMENSIONS.project)].map(([project, t]) => ({ project, ...t })).sort(byCost),
+    byConnection: [...groupBy(rows, DIMENSIONS.connection)].map(([key, t]) => connectionTotals(key!, rows, t)).sort(byCost),
     byMonth: [...groupBy(rows, DIMENSIONS.month)].map(([month, t]) => ({ month: month!, ...t })).sort((a, b) => b.month.localeCompare(a.month)),
   };
 }
@@ -108,13 +126,14 @@ export function backfillSpend(schema: 'main' | 'src' = 'main'): { filled: number
     );
     const added = Number(
       run(
-        `INSERT INTO main.spend (run_id, ts, model, billing, input_tokens, output_tokens, cost_usd, repo, agent, ticket)
+        `INSERT INTO main.spend (run_id, ts, model, billing, input_tokens, output_tokens, cost_usd, repo, agent, ticket, connection_id, connection)
          SELECT runs.id, COALESCE(runs.ended_at, runs.started_at), runs.model, runs.billing,
                 COALESCE(runs.input_tokens, 0), COALESCE(runs.output_tokens, 0), COALESCE(runs.cost_usd, 0),
-                repos.full_name, runs.agent, tickets.number
+                repos.full_name, runs.agent, tickets.number, connections.id, connections.name
          FROM ${schema}.runs
          LEFT JOIN ${schema}.tickets ON tickets.id = runs.ticket_id
          LEFT JOIN ${schema}.repos ON repos.id = tickets.repo_id
+         LEFT JOIN ${schema}.connections ON connections.id = runs.model_connection_id
          WHERE (runs.input_tokens IS NOT NULL OR runs.output_tokens IS NOT NULL OR runs.cost_usd IS NOT NULL)
            AND runs.id NOT IN (SELECT run_id FROM main.spend)`,
       ).changes,

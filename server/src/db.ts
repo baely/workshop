@@ -208,6 +208,16 @@ export const MIGRATIONS = [
   `,
   `ALTER TABLE runs ADD COLUMN pause_reason TEXT; -- while paused: 'limit' (Claude refused) or 'threshold' (your Settings limit)`,
   `ALTER TABLE runs ADD COLUMN pause_requested_at INTEGER; -- while starting/running: when you asked to pause at the next turn boundary`,
+  // Which Claude connection (subscription or API key) each ledger row was billed to; the name is kept for when it's removed.
+  `
+  ALTER TABLE spend ADD COLUMN connection_id INTEGER;
+  ALTER TABLE spend ADD COLUMN connection TEXT;
+  UPDATE spend SET connection_id = x.id, connection = x.name
+    FROM (SELECT runs.id AS run_id, connections.id, connections.name
+          FROM runs JOIN connections ON connections.id = runs.model_connection_id) AS x
+    WHERE x.run_id = spend.run_id;
+  CREATE INDEX spend_connection ON spend (connection_id, ts);
+  `,
 ];
 
 export let db: DatabaseSync;

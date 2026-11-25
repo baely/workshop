@@ -249,6 +249,10 @@ export interface AllowanceView {
   sampledAt: number | null;
   /** Set when Claude itself reported a rate limit during a run. */
   blockedUntil: number | null;
+  /** The account works but Claude doesn't report its 5-hour and weekly usage, so Workshop can't hold launches on your thresholds. */
+  unknown: boolean;
+  /** Tokens (input including cache, plus output) that runs on this connection used in the last 5 hours and 7 days. */
+  tokens: { fiveHour: number; sevenDay: number };
 }
 
 export interface HostView {
@@ -324,6 +328,8 @@ export interface LifetimeSpend {
   byModel: (SpendTotals & { model: string })[];
   /** Repository `owner/name`; null for spend whose run was deleted before Workshop recorded it. Sorted by cost. */
   byProject: (SpendTotals & { project: string | null })[];
+  /** The Claude connection and which of its credentials (`billing`: subscription token or API key) it was billed to; null for spend recorded before Workshop kept track. Sorted by cost. */
+  byConnection: (SpendTotals & { connectionId: number | null; connection: string | null; billing: string })[];
   /** 'YYYY-MM' in the settings time zone, newest first. */
   byMonth: (SpendTotals & { month: string })[];
 }

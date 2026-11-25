@@ -2,6 +2,7 @@ import { useEffect, useId, useState } from 'react';
 import { NavLink, Outlet } from 'react-router';
 import type { Mode, Overview } from '../../../server/src/api-types.ts';
 import { api, useApi, useLiveState } from '../api.ts';
+import { tokens } from '../format.ts';
 import { ThemeToggle } from './ThemeToggle.tsx';
 import { Meter } from './ui.tsx';
 
@@ -120,7 +121,11 @@ export function Layout({ version }: { version: string }) {
           {data?.allowance.map((a) => (
             <div key={a.connectionId} className="row">
               {data.allowance.length > 1 && <span className="small muted">{a.connectionName}</span>}
-              {a.sampledAt ? (
+              {a.unknown ? (
+                <span className="small muted" title="Claude doesn't report this account's usage, so Workshop shows the tokens its agents used instead and can't hold them at your limits.">
+                  Usage unknown · 5-hour {tokens(a.tokens.fiveHour)} · weekly {tokens(a.tokens.sevenDay)}
+                </span>
+              ) : a.sampledAt ? (
                 <>
                   <Meter label="5-hour" window={a.fiveHour} threshold={data.thresholds.fiveHour} />
                   <Meter label="Weekly" window={a.sevenDay} threshold={data.thresholds.weekly} />

@@ -362,6 +362,8 @@ export async function probeAllowance(connectionId: number, force = false) {
     } finally {
       await env.remove(id).catch(() => {}); // force-removes, so a stuck probe doesn't linger
     }
+    // Some accounts answer without reporting their usage windows: it works, but the usage is unknown.
+    if (!claude.usage && claude.result?.subtype === 'success' && !claude.result.isError) claude.usage = { fiveHour: null, sevenDay: null };
     if (!claude.usage) {
       const reason = claude.result?.errors.join(' ') || claude.result?.text || err.slice(-3).join(' ').trim();
       throw new Error(reason || `Claude Code didn't report usage (exit ${state.exitCode})`);

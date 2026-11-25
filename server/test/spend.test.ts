@@ -3,7 +3,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { all, initDb, MIGRATIONS, one, run } from '../src/db.ts';
-import { backfillSpend } from '../src/spend.ts';
+import { backfillSpend, lifetimeSpend } from '../src/spend.ts';
 
 const spendOf = (id: string) => one<{ repo: string | null; agent: string | null; ticket: number | null }>('SELECT repo, agent, ticket FROM spend WHERE run_id = ?', id)!;
 const addRun = (id: string, ticket: number, usage: number | null) =>
@@ -64,5 +64,25 @@ describe('backfillSpend', () => {
 
   it('refuses an unknown schema name', () => {
     expect(() => backfillSpend('x; DROP' as 'main')).toThrow();
+  });
+});
+
+describe('lifetimeSpend by connection', () => {
+  it("totals each connection's subscription and API key under its current name, keeping a removed one's recorded name", () => {
+    run('DELETE FROM spend');
+    const conn = Number(run("INSERT INTO connections (kind, provider, name, config, created_at, updated_at) VALUES ('model', 'anthropic', 'Claude-2', '{}', 0, 0)").lastInsertRowid);
+    const add = (id: string, connId: number | null, name: string | null, cost: number) =>
+      run("INSERT INTO spend (run_id, ts, model, billing, input_tokens, output_tokens, cost_usd, connection_id, connection) VALUES (?, 1, 'm', 'subscription', 10, 1, ?, ?, ?)", id, cost, connId, name);
+    add('a', conn, 'Bailey-Claude', 1);
+    add('b', conn, 'Claude-2', 2);
+    add('c', 999, 'Gone', 5);
+    add('d', null, null, 0.5);
+    run("INSERT INTO spend (run_id, ts, model, billing, input_tokens, output_tokens, cost_usd, connection_id, connection) VALUES ('e', 1, 'm', 'api', 10, 1, 4, ?, 'Claude-2')", conn);
+    expect(lifetimeSpend('UTC').byConnection).toEqual([
+      { connectionId: 999, connection: 'Gone', billing: 'subscription', runs: 1, inputTokens: 10, outputTokens: 1, costUsd: 5 },
+      { connectionId: conn, connection: 'Claude-2', billing: 'api', runs: 1, inputTokens: 10, outputTokens: 1, costUsd: 4 },
+      { connectionId: conn, connection: 'Claude-2', billing: 'subscription', runs: 2, inputTokens: 20, outputTokens: 2, costUsd: 3 },
+      { connectionId: null, connection: null, billing: 'subscription', runs: 1, inputTokens: 10, outputTokens: 1, costUsd: 0.5 },
+    ]);
   });
 });

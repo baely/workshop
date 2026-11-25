@@ -47,6 +47,8 @@ const schemas: Record<string, Schema> = {
     sevenDay: nullable(ref('UsageWindow')),
     sampledAt: nullable(int),
     blockedUntil: nullable(int),
+    unknown: bool,
+    tokens: object({ fiveHour: int, sevenDay: int }),
   }),
   Usage: object({
     allowance: array(ref('AllowanceView')),
@@ -63,6 +65,7 @@ const schemas: Record<string, Schema> = {
     api: ref('SpendTotals'),
     byModel: array({ allOf: [ref('SpendTotals'), object({ model: str })] }),
     byProject: array({ allOf: [ref('SpendTotals'), object({ project: nullable(str) })] }),
+    byConnection: array({ allOf: [ref('SpendTotals'), object({ connectionId: nullable(int), connection: nullable(str), billing: str })] }),
     byMonth: array({ allOf: [ref('SpendTotals'), object({ month: str })] }),
   }),
   RunView: object({

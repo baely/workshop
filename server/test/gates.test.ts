@@ -51,6 +51,8 @@ describe('allowance gate', () => {
     sevenDay: { pct: 50, resetsAt: now + 86400_000 },
     sampledAt: now - 60_000,
     blockedUntil: null,
+    unknown: false,
+    tokens: { fiveHour: 0, sevenDay: 0 },
     ...over,
   });
 

@@ -81,6 +81,16 @@ function LifetimeUsage() {
             {data.byProject.some((p) => p.project === null) && (
               <p className="small muted">Unknown is spend from runs deleted before Workshop recorded their repository.</p>
             )}
+            <SpendTable
+              title="By connection"
+              label="connection"
+              rows={data.byConnection.map((c) => ({
+                key: `${c.connectionId}:${c.billing}`,
+                name: `${c.connection ?? 'Unknown'} (${c.billing === 'api' ? 'API key' : 'subscription'})`,
+                t: c,
+              }))}
+            />
+            {data.byConnection.some((c) => c.connection === null) && <p className="small muted">Unknown is spend recorded before Workshop kept track of connections.</p>}
             <SpendTable title="By month" label="month" rows={data.byMonth.map((m) => ({ key: m.month, name: m.month, t: m }))} />
           </>
         )}

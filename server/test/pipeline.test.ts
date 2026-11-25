@@ -24,7 +24,7 @@ const { bus } = await import('../src/events.ts');
 const { activity, getRun, readLog } = await import('../src/runs.ts');
 const { sweepMedia } = await import('../src/media.ts');
 const { launch, PAUSE_GRACE_MS, requestPause, resume } = await import('../src/scheduler/runner.ts');
-const { buildQueue, hostLoads, launchNow, mergeApproved, resumeNow, resumePaused, settleManual } = await import('../src/scheduler/loop.ts');
+const { buildQueue, hostLoads, launchNow, mergeApproved, probeAllowance, resumeNow, resumePaused, settleManual } = await import('../src/scheduler/loop.ts');
 const { setPrioritised, setPush, getTicket, ticketView, getRepo } = await import('../src/tickets.ts');
 const { syncRepo } = await import('../src/scheduler/sync.ts');
 const { getSettings, saveSettings } = await import('../src/settings.ts');
@@ -913,11 +913,41 @@ describe('runner', () => {
     });
     const r = await settle(go());
     expect(r).toMatchObject({ status: 'succeeded', input_tokens: 10, output_tokens: 5, cost_usd: 0.25 });
-    const rows = all<object>('SELECT model, billing, input_tokens, output_tokens, cost_usd, repo, agent, ticket FROM spend WHERE run_id = ?', r.id);
+    const rows = all<object>('SELECT model, billing, input_tokens, output_tokens, cost_usd, repo, agent, ticket, connection_id, connection FROM spend WHERE run_id = ?', r.id);
     const t = one<{ number: number; full_name: string }>('SELECT tickets.number, repos.full_name FROM tickets JOIN repos ON repos.id = tickets.repo_id WHERE tickets.id = ?', r.ticket_id)!;
-    expect(rows).toEqual([{ model: 'claude-sonnet-5-5', billing: 'subscription', input_tokens: 10, output_tokens: 5, cost_usd: 0.25, repo: t.full_name, agent: r.agent, ticket: t.number }]);
+    expect(rows).toEqual([{ model: 'claude-sonnet-5-5', billing: 'subscription', input_tokens: 10, output_tokens: 5, cost_usd: 0.25, repo: t.full_name, agent: r.agent, ticket: t.number, connection_id: ids.model, connection: 'Claude' }]);
     run('DELETE FROM runs WHERE id = ?', r.id);
     expect(all('SELECT id FROM spend WHERE run_id = ?', r.id)).toHaveLength(1);
+  });
+
+  describe('allowance probe', () => {
+    it("marks the usage unknown when the account answers without reporting it, and counts the connection's tokens instead", async () => {
+      fake.env = new FakeEnv({ usage: [line({ type: 'result', subtype: 'success', is_error: false, result: 'OK', usage: { input_tokens: 1, output_tokens: 1 } })] });
+      const other = createConnection('model', 'anthropic', 'Claude 2', {}, { oauthToken: 'sk-ant-oat01-two' });
+      const now = Date.now();
+      const spend = (conn: number, ts: number, tokens: number) =>
+        run("INSERT INTO spend (run_id, ts, model, billing, input_tokens, output_tokens, cost_usd, connection_id) VALUES ('x', ?, 'm', 'subscription', ?, 0, 0, ?)", ts, tokens, conn);
+      spend(other, now - 60_000, 100);
+      spend(other, now - 6 * 3600_000, 20);
+      spend(other, now - 8 * 86400_000, 3);
+      spend(ids.model, now, 5000);
+      expect(await probeAllowance(other, true)).toEqual({ fiveHour: null, sevenDay: null });
+      expect(allowanceOf(other)).toMatchObject({ unknown: true, fiveHour: null, sevenDay: null, tokens: { fiveHour: 100, sevenDay: 120 } });
+      expect(allowanceOf(other).sampledAt).not.toBeNull();
+    });
+
+    it('still fails when Claude Code errors', async () => {
+      fake.env = new FakeEnv({ usage: [line({ type: 'result', subtype: 'success', is_error: true, result: 'Invalid bearer token', usage: {} })] });
+      const other = createConnection('model', 'anthropic', 'Claude 3', {}, { oauthToken: 'sk-ant-oat01-three' });
+      await expect(probeAllowance(other, true)).rejects.toThrow('Invalid bearer token');
+      expect(allowanceOf(other)).toMatchObject({ unknown: false, sampledAt: null });
+    });
+
+    it('reports known usage as known', async () => {
+      fake.env = new FakeEnv({ usage: [RATE, result({})] });
+      await probeAllowance(ids.model, true);
+      expect(allowanceOf(ids.model)).toMatchObject({ unknown: false, fiveHour: { pct: 44, resetsAt: 1791897000_000 } });
+    });
   });
 
   it('adds up a paused run and its resume', async () => {

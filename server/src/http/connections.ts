@@ -94,7 +94,9 @@ async function describe(c: Connection): Promise<string> {
       if (c.secret.apiKey) parts.push(`API key works (${await modelsOf(c).checkApiKey()} models)`);
       if (c.secret.oauthToken) {
         const usage = await probeAllowance(c.id, true);
-        parts.push(usage ? `Subscription works: 5-hour ${pct(usage.fiveHour)}, weekly ${pct(usage.sevenDay)}` : 'A usage check is already running');
+        if (!usage) parts.push('A usage check is already running');
+        else if (!usage.fiveHour && !usage.sevenDay) parts.push("Subscription works, but Claude doesn't report its usage, so Workshop counts its tokens instead and can't hold agents at your limits");
+        else parts.push(`Subscription works: 5-hour ${pct(usage.fiveHour)}, weekly ${pct(usage.sevenDay)}`);
       }
       check(parts.length, 'Add a subscription token, an API key, or both.');
       return `${parts.join('. ')}.`;

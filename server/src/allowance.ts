@@ -20,6 +20,8 @@ export function allowanceOf(connectionId: number, name = ''): AllowanceView {
     "SELECT blocked_until FROM allowance_samples WHERE connection_id = ? AND source = 'limit' ORDER BY ts DESC LIMIT 1",
     connectionId,
   );
+  const tokensSince = (ms: number) =>
+    one<{ n: number | null }>('SELECT SUM(input_tokens + output_tokens) AS n FROM spend WHERE connection_id = ? AND ts >= ?', connectionId, Date.now() - ms)?.n ?? 0;
   return {
     connectionId,
     connectionName: name,
@@ -27,6 +29,8 @@ export function allowanceOf(connectionId: number, name = ''): AllowanceView {
     sevenDay: probe ? window(probe.seven_day, probe.seven_day_resets) : null,
     sampledAt: probe?.ts ?? null,
     blockedUntil: block && block.blocked_until > Date.now() ? block.blocked_until : null,
+    unknown: Boolean(probe) && probe!.five_hour === null && probe!.seven_day === null,
+    tokens: { fiveHour: tokensSince(5 * 3600_000), sevenDay: tokensSince(7 * 86400_000) },
   };
 }
 
