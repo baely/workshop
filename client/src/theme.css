@@ -295,6 +295,14 @@ pre,
   color: var(--muted);
 }
 
+/* A task's prompt, as the owner wrote it: plain text, never Markdown. */
+.prompt {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--raised);
+}
+
 .grid-2 {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));

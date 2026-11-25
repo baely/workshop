@@ -521,7 +521,7 @@ describe('ticket lifecycle', () => {
     const conn = Number(run("INSERT INTO connections (kind, provider, name, config, secret, status, created_at, updated_at) VALUES ('vcs', 'github', 'GH life', '{}', '', 'ok', 0, 0)").lastInsertRowid);
     const repo = Number(run("INSERT INTO repos (vcs_connection_id, full_name, default_branch, url, enabled) VALUES (?, 'me/life', 'main', 'u', 1)", conn).lastInsertRowid);
     ticketId = Number(run("INSERT INTO tickets (repo_id, number, title, body, url, author, state, labels, updated_at) VALUES (?, 9, 'Lifecycle', '', 'u', 'Damiante', 'closed', '[]', '2026-10-13T00:00:00Z')", repo).lastInsertRowid);
-    const ins = "INSERT INTO runs (id, ticket_id, agent, mode, attempt, model, billing, status, summary, started_at) VALUES (?, ?, ?, ?, 1, 'm', 'subscription', 'succeeded', ?, ?)";
+    const ins = "INSERT INTO runs (id, ticket_id, repo_id, agent, mode, attempt, model, billing, status, summary, started_at) VALUES (?, ?, (SELECT repo_id FROM tickets WHERE id = ?2), ?, ?, 1, 'm', 'subscription', 'succeeded', ?, ?)";
     run(ins, 'l-3', ticketId, 'classifier', 'delta', 'Sized S', 30);
     run(ins, 'l-1', ticketId, 'classifier', 'normal', 'Sized M', 10);
     run(ins, 'l-2', ticketId, 'implement', 'normal', 'Built it', 20);
@@ -724,7 +724,7 @@ describe("changing a ticket's status", () => {
 
   it('refuses while an agent works on the ticket', async () => {
     fakeTickets.setLabels = vi.fn();
-    run("INSERT INTO runs (id, ticket_id, agent, attempt, model, billing, status, started_at) VALUES ('r-state', ?, 'design', 1, 'm', 'subscription', 'running', 0)", id);
+    run("INSERT INTO runs (id, ticket_id, repo_id, agent, attempt, model, billing, status, started_at) VALUES ('r-state', ?, (SELECT repo_id FROM tickets WHERE id = ?1), 'design', 1, 'm', 'subscription', 'running', 0)", id);
     const res = await put(id, { skip: true });
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/Stop it in the run view first/);
@@ -805,7 +805,7 @@ describe('dismissing Needs you items', () => {
       return { needs: has(o.needsYou), dismissed: has(o.dismissed) };
     };
     const addRun = (rid: string, at: number) =>
-      run("INSERT INTO runs (id, ticket_id, agent, attempt, model, billing, status, started_at) VALUES (?, ?, 'design', 1, 'm', 'subscription', 'failed', ?)", rid, id, at);
+      run("INSERT INTO runs (id, ticket_id, repo_id, agent, attempt, model, billing, status, started_at) VALUES (?, ?, (SELECT repo_id FROM tickets WHERE id = ?2), 'design', 1, 'm', 'subscription', 'failed', ?)", rid, id, at);
 
     setLabels(['workshop/stage:implement']);
     expect((await dismiss({ dismissed: true })).status).toBe(409);
@@ -888,8 +888,8 @@ describe('prioritising a ticket', () => {
 describe('alert links', () => {
   it('points run and ticket alerts at a run, and leaves other alerts unlinked', async () => {
     const tid = one<{ id: number }>('SELECT id FROM tickets WHERE number = 4')!.id;
-    run("INSERT INTO runs (id, ticket_id, agent, attempt, model, billing, status, started_at) VALUES ('r-old', ?, 'design', 1, 'm', 'subscription', 'failed', 1)", tid);
-    run("INSERT INTO runs (id, ticket_id, agent, attempt, model, billing, status, started_at) VALUES ('r-new', ?, 'design', 2, 'm', 'subscription', 'failed', 2)", tid);
+    run("INSERT INTO runs (id, ticket_id, repo_id, agent, attempt, model, billing, status, started_at) VALUES ('r-old', ?, (SELECT repo_id FROM tickets WHERE id = ?1), 'design', 1, 'm', 'subscription', 'failed', 1)", tid);
+    run("INSERT INTO runs (id, ticket_id, repo_id, agent, attempt, model, billing, status, started_at) VALUES ('r-new', ?, (SELECT repo_id FROM tickets WHERE id = ?1), 'design', 2, 'm', 'subscription', 'failed', 2)", tid);
     for (const [kind, ref] of [['run-detached', 'run:r-old'], ['ticket-failed', `ticket:${tid}`], ['host-offline', 'host:1'], ['gone', 'run:missing']]) {
       run("INSERT INTO alerts (level, kind, message, ref, created_at) VALUES ('error', ?, 'm', ?, 0)", kind, ref);
     }
@@ -917,7 +917,7 @@ describe('live streams', () => {
   });
 
   const addRun = (id: string, status: string, lines: number) => {
-    run("INSERT INTO runs (id, ticket_id, agent, attempt, model, billing, status, started_at) VALUES (?, ?, 'design', 1, 'm', 'subscription', ?, 0)", id, ticket, status);
+    run("INSERT INTO runs (id, ticket_id, repo_id, agent, attempt, model, billing, status, started_at) VALUES (?, ?, (SELECT repo_id FROM tickets WHERE id = ?2), 'design', 1, 'm', 'subscription', ?, 0)", id, ticket, status);
     for (let i = 0; i < lines; i++) appendLog(id, { step: 'run', stream: 'stdout', text: `line ${i}` });
   };
   const open = async (path: string) => {
@@ -984,7 +984,7 @@ describe('live streams', () => {
   });
 
   it('drops image data from over-long log lines so they stay readable', async () => {
-    run("INSERT INTO runs (id, ticket_id, agent, attempt, model, billing, status, started_at) VALUES ('live-image', ?, 'design', 1, 'm', 'subscription', 'done', 0)", ticket);
+    run("INSERT INTO runs (id, ticket_id, repo_id, agent, attempt, model, billing, status, started_at) VALUES ('live-image', ?, (SELECT repo_id FROM tickets WHERE id = ?1), 'design', 1, 'm', 'subscription', 'done', 0)", ticket);
     const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A'.repeat(100_000) } };
     const event = { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: [image] }] }, tool_use_result: { file: { base64: 'B'.repeat(100_000) } } };
     appendLog('live-image', { step: 'run', stream: 'stdout', text: JSON.stringify(event) });
@@ -1116,7 +1116,7 @@ describe('pausing and resuming a run', () => {
   });
 
   const add = (id: string, status: string) =>
-    run("INSERT INTO runs (id, ticket_id, agent, attempt, model, billing, status, started_at) VALUES (?, ?, 'implement', 1, 'm', 'subscription', ?, 0)", id, ticket, status);
+    run("INSERT INTO runs (id, ticket_id, repo_id, agent, attempt, model, billing, status, started_at) VALUES (?, ?, (SELECT repo_id FROM tickets WHERE id = ?2), 'implement', 1, 'm', 'subscription', ?, 0)", id, ticket, status);
 
   it('answers 404 for an unknown run', async () => {
     expect((await post('nope', 'pause')).status).toBe(404);

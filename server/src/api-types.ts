@@ -94,7 +94,7 @@ export interface RepoView {
   mergeWarning: string | null;
 }
 
-export type AgentName = 'classifier' | 'design' | 'design-review' | 'implement' | 'code-review' | 'merge';
+export type AgentName = 'classifier' | 'design' | 'design-review' | 'implement' | 'code-review' | 'merge' | 'task';
 export type Billing = 'subscription' | 'api';
 
 export interface AgentClassView {
@@ -177,10 +177,17 @@ export type RunStatus = 'starting' | 'running' | 'publishing' | 'paused' | 'succ
 
 export interface RunView {
   id: string;
-  ticketId: number;
-  ticket: string;
-  ticketTitle: string;
-  ticketUrl: string;
+  /** The ticket fields are null for a task (a run started with your own prompt, outside the ticket workflow). */
+  ticketId: number | null;
+  /** owner/repo#12 */
+  ticket: string | null;
+  ticketTitle: string | null;
+  ticketUrl: string | null;
+  /** The repository's full name, owner/repo. */
+  repo: string;
+  /** The agent host's connection id. */
+  environmentId: number | null;
+  task: TaskInfo | null;
   agent: AgentName;
   mode: 'normal' | 'delta';
   attempt: number;
@@ -211,6 +218,29 @@ export interface RunView {
   timeoutMin: number | null;
   /** When the current step's container started: the time limit counts from here. */
   stepStartedAt: number | null;
+}
+
+/** What a task run was asked to do. */
+export interface TaskInfo {
+  prompt: string;
+  /** The prompt's first line, shortened. */
+  title: string;
+  /** The branch the task works on, workshop/task-<first 8 characters of the run id>. */
+  branch: string;
+  /** Set once Workshop pushed the branch with commits on it. */
+  branchUrl: string | null;
+}
+
+export interface TaskRepo {
+  id: number;
+  fullName: string;
+}
+
+export interface TasksView {
+  /** Every repository Workshop can see, enabled ones first. */
+  repos: TaskRepo[];
+  /** Tasks, newest first. */
+  tasks: RunView[];
 }
 
 export type PauseReason = 'limit' | 'threshold' | 'manual' | 'connection';

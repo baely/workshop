@@ -7,7 +7,7 @@ import { backfillSpend, lifetimeSpend } from '../src/spend.ts';
 
 const spendOf = (id: string) => one<{ repo: string | null; agent: string | null; ticket: number | null }>('SELECT repo, agent, ticket FROM spend WHERE run_id = ?', id)!;
 const addRun = (id: string, ticket: number, usage: number | null) =>
-  run("INSERT INTO runs (id, ticket_id, agent, attempt, model, billing, status, input_tokens, started_at) VALUES (?, ?, 'design', 1, 'm', 'subscription', 'succeeded', ?, 5)", id, ticket, usage);
+  run("INSERT INTO runs (id, ticket_id, repo_id, agent, attempt, model, billing, status, input_tokens, started_at) VALUES (?, ?, (SELECT repo_id FROM tickets WHERE id = ?2), 'design', 1, 'm', 'subscription', 'succeeded', ?, 5)", id, ticket, usage);
 
 let ticket: number;
 

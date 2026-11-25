@@ -143,7 +143,7 @@ beforeEach(() => {
 });
 
 const go = (agent: AgentName = 'implement', mode: 'normal' | 'delta' = 'normal') =>
-  launch({ ticketId: 1, agent, mode, attempt: 1, environmentId: ids.env, modelConnectionId: ids.model, model: 'claude-sonnet-5-5', billing: 'subscription' })!;
+  launch({ ticketId: 1, repoId: 1, agent, mode, attempt: 1, environmentId: ids.env, modelConnectionId: ids.model, model: 'claude-sonnet-5-5', billing: 'subscription' })!;
 
 async function settle(id: string) {
   await vi.waitFor(() => expect(['succeeded', 'failed', 'paused', 'cancelled']).toContain(getRun(id)?.status), { timeout: 2000 });
@@ -654,7 +654,7 @@ describe('runner', () => {
     it('lets API-billed runs carry on', async () => {
       const { env, state } = killable([rate(0.75), toolUse('a'), toolResult('a'), DONE]);
       fake.env = env;
-      const id = launch({ ticketId: 1, agent: 'implement', mode: 'normal', attempt: 1, environmentId: ids.env, modelConnectionId: ids.model, model: 'claude-sonnet-5-5', billing: 'api' })!;
+      const id = launch({ ticketId: 1, repoId: 1, agent: 'implement', mode: 'normal', attempt: 1, environmentId: ids.env, modelConnectionId: ids.model, model: 'claude-sonnet-5-5', billing: 'api' })!;
       expect((await settle(id)).status).toBe('succeeded');
       expect(state.killedAt).toBe(-1);
     });
@@ -930,7 +930,7 @@ describe('runner', () => {
         );
         const other = one<{ id: number }>('SELECT id FROM tickets WHERE number = 98')!.id;
         try {
-          run("INSERT INTO runs (id, ticket_id, agent, mode, attempt, environment_id, model, billing, status, started_at) VALUES ('busy', ?, 'implement', 'normal', 1, ?, 'm', 'subscription', 'running', 0)", other, ids.env);
+          run("INSERT INTO runs (id, ticket_id, repo_id, agent, mode, attempt, environment_id, model, billing, status, started_at) VALUES ('busy', ?, (SELECT repo_id FROM tickets WHERE id = ?1), 'implement', 'normal', 1, ?, 'm', 'subscription', 'running', 0)", other, ids.env);
           expect(() => resumeNow(id)).toThrow('box has no free agent slot. Pause or stop another agent there, or resume this one when a slot frees up.');
           expect(getRun(id)!.status).toBe('paused');
         } finally {
@@ -1118,8 +1118,8 @@ describe('runner', () => {
     fake.env = env;
     const id = 'reattach-run';
     run(
-      `INSERT INTO runs (id, ticket_id, agent, mode, attempt, environment_id, model_connection_id, model, billing, status, step, container_id, volume, image, max_turns, timeout_min, step_started_at, started_at)
-       VALUES (?, 1, 'implement', 'normal', 1, ?, ?, 'claude-sonnet-5-5', 'subscription', 'running', 'run', 'run-container-old', 'v', 'img', 300, 1, ?, ?)`,
+      `INSERT INTO runs (id, ticket_id, repo_id, agent, mode, attempt, environment_id, model_connection_id, model, billing, status, step, container_id, volume, image, max_turns, timeout_min, step_started_at, started_at)
+       VALUES (?, 1, (SELECT repo_id FROM tickets WHERE id = 1), 'implement', 'normal', 1, ?, ?, 'claude-sonnet-5-5', 'subscription', 'running', 'run', 'run-container-old', 'v', 'img', 300, 1, ?, ?)`,
       id,
       ids.env,
       ids.model,
@@ -1477,8 +1477,8 @@ describe('publish retries', () => {
     fake.env = work();
     const id = 'stuck-run';
     run(
-      `INSERT INTO runs (id, ticket_id, agent, mode, attempt, environment_id, model_connection_id, model, billing, status, started_at, result, publish_retries, publish_failing_since)
-       VALUES (?, 1, 'implement', 'normal', 1, ?, ?, 'claude-sonnet-5-5', 'subscription', 'publishing', ?, ?, 8, ?)`,
+      `INSERT INTO runs (id, ticket_id, repo_id, agent, mode, attempt, environment_id, model_connection_id, model, billing, status, started_at, result, publish_retries, publish_failing_since)
+       VALUES (?, 1, (SELECT repo_id FROM tickets WHERE id = 1), 'implement', 'normal', 1, ?, ?, 'claude-sonnet-5-5', 'subscription', 'publishing', ?, ?, 8, ?)`,
       id,
       ids.env,
       ids.model,
@@ -1881,7 +1881,7 @@ describe('moving off a paused subscription', () => {
   describe('API billing', () => {
     it("doesn't move or stop a running API-billed agent", async () => {
       const { stream, say } = live();
-      const id = launch({ ticketId: 1, agent: 'implement', mode: 'normal', attempt: 1, environmentId: ids.env, modelConnectionId: ids.model, model: 'claude-sonnet-5-5', billing: 'api' })!;
+      const id = launch({ ticketId: 1, repoId: 1, agent: 'implement', mode: 'normal', attempt: 1, environmentId: ids.env, modelConnectionId: ids.model, model: 'claude-sonnet-5-5', billing: 'api' })!;
       await say(toolUse('a'), toolResult('a'));
       pauseFirst();
       expect(stream.killed).toBe(false);
@@ -2084,7 +2084,7 @@ describe('sync', () => {
     });
 
     it.each(['running', 'paused'])('cancels a %s run without marking the ticket failed', async (status) => {
-      run("INSERT INTO runs (id, ticket_id, agent, attempt, model, billing, status, started_at) VALUES ('r-skip', 1, 'implement', 1, 'm', 'subscription', ?, 0)", status);
+      run("INSERT INTO runs (id, ticket_id, repo_id, agent, attempt, model, billing, status, started_at) VALUES ('r-skip', 1, (SELECT repo_id FROM tickets WHERE id = 1), 'implement', 1, 'm', 'subscription', ?, 0)", status);
       try {
         await syncRepo(repo());
         const r = one<{ status: string; error: string }>("SELECT status, error FROM runs WHERE id = 'r-skip'");
@@ -2755,7 +2755,7 @@ describe('media store', () => {
 
     run('UPDATE tickets SET labels = ? WHERE id = 1', JSON.stringify([label.size('m'), label.stage('design')]));
     const e = env();
-    const id = launch({ ticketId: 1, agent: 'design', mode: 'normal', attempt: 1, environmentId: ids.env, modelConnectionId: ids.model, model: 'claude-sonnet-5-5', billing: 'subscription' })!;
+    const id = launch({ ticketId: 1, repoId: 1, agent: 'design', mode: 'normal', attempt: 1, environmentId: ids.env, modelConnectionId: ids.model, model: 'claude-sonnet-5-5', billing: 'subscription' })!;
     await settle(id);
     expect(e.spec('run')!.files!['.workshop/prompt.md']).toContain('Playwright with Chromium');
   });

@@ -7,7 +7,11 @@ export function recordSpend(r: RunRow, res: { inputTokens?: number; outputTokens
   const input = res.inputTokens ?? 0;
   const output = res.outputTokens ?? 0;
   const cost = res.costUsd ?? 0;
-  const where = one<{ full_name: string; number: number }>('SELECT repos.full_name, tickets.number FROM tickets JOIN repos ON repos.id = tickets.repo_id WHERE tickets.id = ?', r.ticket_id);
+  // A task has no ticket: its repository comes from the run.
+  const where = one<{ full_name: string; number: number | null }>(
+    'SELECT repos.full_name, tickets.number FROM runs JOIN repos ON repos.id = runs.repo_id LEFT JOIN tickets ON tickets.id = runs.ticket_id WHERE runs.id = ?',
+    r.id,
+  );
   const conn = r.model_connection_id === null ? undefined : one<{ name: string }>('SELECT name FROM connections WHERE id = ?', r.model_connection_id);
   run(
     'INSERT INTO spend (run_id, ts, model, billing, input_tokens, output_tokens, cost_usd, repo, agent, ticket, connection_id, connection) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',

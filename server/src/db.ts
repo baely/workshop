@@ -262,6 +262,62 @@ export const MIGRATIONS = [
   ALTER TABLE runs ADD COLUMN publish_retry_at INTEGER;      -- when the tick may publish again
   ALTER TABLE runs ADD COLUMN publish_failing_since INTEGER; -- first temporary failure, for the 6-hour give-up
   `,
+  `
+  -- Tasks (#102): a run without a ticket, started with your own prompt on a repository. SQLite can't drop
+  -- NOT NULL in place, so runs is rebuilt; later migrations start from this definition.
+  CREATE TABLE runs_new (
+    id TEXT PRIMARY KEY,
+    ticket_id INTEGER REFERENCES tickets(id) ON DELETE CASCADE, -- null for a task
+    agent TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'normal',
+    attempt INTEGER NOT NULL,
+    environment_id INTEGER REFERENCES connections(id) ON DELETE SET NULL,
+    model_connection_id INTEGER REFERENCES connections(id) ON DELETE SET NULL,
+    model TEXT NOT NULL,
+    billing TEXT NOT NULL,
+    status TEXT NOT NULL,
+    step TEXT,
+    container_id TEXT,
+    volume TEXT,
+    log_since TEXT,
+    resumes INTEGER NOT NULL DEFAULT 0,
+    exit_code INTEGER,
+    result TEXT,
+    summary TEXT,
+    error TEXT,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    cost_usd REAL,
+    resets_at INTEGER,
+    started_at INTEGER NOT NULL,
+    ended_at INTEGER,
+    image TEXT,
+    pause_reason TEXT,
+    pause_requested_at INTEGER,
+    switched_from INTEGER,
+    max_turns INTEGER,
+    timeout_min INTEGER,
+    step_started_at INTEGER,
+    publish_state TEXT,
+    publish_retries INTEGER NOT NULL DEFAULT 0,
+    publish_retry_at INTEGER,
+    publish_failing_since INTEGER,
+    repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+    prompt TEXT, -- a task's prompt, as you wrote it
+    browser INTEGER NOT NULL DEFAULT 0, -- a task with the browser image
+    CHECK ((ticket_id IS NULL) = (prompt IS NOT NULL))
+  );
+  -- An inner join: a run whose ticket row is gone is already invisible, and would have no repository.
+  INSERT INTO runs_new (id, ticket_id, agent, mode, attempt, environment_id, model_connection_id, model, billing, status, step, container_id, volume, log_since, resumes, exit_code, result, summary, error, input_tokens, output_tokens, cost_usd, resets_at, started_at, ended_at, image, pause_reason, pause_requested_at, switched_from, max_turns, timeout_min, step_started_at, publish_state, publish_retries, publish_retry_at, publish_failing_since, repo_id)
+    SELECT runs.id, runs.ticket_id, runs.agent, runs.mode, runs.attempt, runs.environment_id, runs.model_connection_id, runs.model, runs.billing, runs.status, runs.step, runs.container_id, runs.volume, runs.log_since, runs.resumes, runs.exit_code, runs.result, runs.summary, runs.error, runs.input_tokens, runs.output_tokens, runs.cost_usd, runs.resets_at, runs.started_at, runs.ended_at, runs.image, runs.pause_reason, runs.pause_requested_at, runs.switched_from, runs.max_turns, runs.timeout_min, runs.step_started_at, runs.publish_state, runs.publish_retries, runs.publish_retry_at, runs.publish_failing_since, tickets.repo_id FROM runs JOIN tickets ON tickets.id = runs.ticket_id;
+  DROP TABLE runs;
+  ALTER TABLE runs_new RENAME TO runs;
+  CREATE UNIQUE INDEX runs_one_active_per_ticket ON runs(ticket_id)
+    WHERE status IN ('starting', 'running', 'publishing', 'paused');
+  -- Existing installs: the Task agent starts with Implementation's model and billing.
+  INSERT OR IGNORE INTO agent_classes (name, model, model_connection_id, effort, billing, max_turns, timeout_min)
+    SELECT 'task', model, model_connection_id, effort, billing, 200, 120 FROM agent_classes WHERE name = 'implement';
+  `,
 ];
 
 export let db: DatabaseSync;

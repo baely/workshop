@@ -3,14 +3,14 @@ import path from 'node:path';
 import { Router } from 'express';
 import { agentViews, updateAgent } from '../agents.ts';
 import { allowanceOf, allowanceViews, apiSpendSince } from '../allowance.ts';
-import type { AgentClassView, AgentName, AlertView, LogEntry, ModelOption, TicketLifecycle, TicketMedia, Overview, Settings, TicketStatePatch, Usage } from '../api-types.ts';
+import type { AgentClassView, AgentName, AlertView, LogEntry, ModelOption, TaskRepo, TasksView, TicketLifecycle, TicketMedia, Overview, Settings, TicketStatePatch, Usage } from '../api-types.ts';
 import { all, one, run } from '../db.ts';
 import { bus, openSse, publish } from '../events.ts';
 import { listMedia, mediaDir, mediaView } from '../media.ts';
 import { getConnection, listConnections, modelsOf, setLimits } from '../providers/index.ts';
 import { ACTIVE_STATUSES, getRun, logBus, readLog, runView, runViews, ticketRunViews } from '../runs.ts';
 import { pushRefusal, withinHours } from '../scheduler/gates.ts';
-import { hostViews, kick, launchNow, queueView, refreshNow, resumeNow, startOfDay, syncSoon } from '../scheduler/loop.ts';
+import { hostViews, kick, launchNow, launchTask, MAX_TASK_PROMPT, queueView, refreshNow, resumeNow, startOfDay, syncSoon } from '../scheduler/loop.ts';
 import { requestPause, stopRun } from '../scheduler/runner.ts';
 import { getSettings, saveSettings, TICKET_ORDERS } from '../settings.ts';
 import { lifetimeSpend } from '../spend.ts';
@@ -211,6 +211,24 @@ apiRouter.put('/hosts/:id', (req, res) => {
 
 apiRouter.post('/tickets/:id/launch', (req, res) => {
   const id = launchNow(int(req.params.id, 'Ticket id', 1, Number.MAX_SAFE_INTEGER));
+  res.status(202).json(runView(id));
+});
+
+apiRouter.get('/tasks', (_req, res) => {
+  const repos = all<{ id: number; full_name: string }>('SELECT id, full_name FROM repos ORDER BY enabled DESC, full_name').map((r): TaskRepo => ({ id: r.id, fullName: r.full_name }));
+  const body: TasksView = { repos, tasks: runViews('runs.ticket_id IS NULL') };
+  res.json(body);
+});
+
+/** Starts a task: the Task agent with your prompt on a repository, now or not at all. */
+apiRouter.post('/tasks', async (req, res) => {
+  const b = req.body ?? {};
+  const repoId = int(b.repoId, 'Repository id', 1, Number.MAX_SAFE_INTEGER);
+  const prompt = typeof b.prompt === 'string' ? b.prompt.trim() : '';
+  check(prompt.length >= 1 && prompt.length <= MAX_TASK_PROMPT, 'Describe the task in under 20,000 characters.');
+  check(b.browser === undefined || typeof b.browser === 'boolean', 'browser must be true or false.');
+  const id = await launchTask({ repoId, prompt, browser: b.browser === true });
+  kick();
   res.status(202).json(runView(id));
 });
 

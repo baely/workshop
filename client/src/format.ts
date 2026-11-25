@@ -7,7 +7,16 @@ export const AGENT_LABEL: Record<AgentName, string> = {
   implement: 'Implementation',
   'code-review': 'Code reviewer',
   merge: 'Merge',
+  task: 'Task',
 };
+
+/** What a run works on: its ticket, linking to the ticket's lifecycle, or "Task in owner/repo", linking to the Tasks page. */
+export function runSubject(run: Pick<RunView, 'ticketId' | 'ticket' | 'repo'>): { text: string; to: string } {
+  return run.ticketId === null ? { text: `Task in ${run.repo}`, to: '/tasks' } : { text: run.ticket ?? run.repo, to: `/tickets/${run.ticketId}` };
+}
+
+/** The second line under a run's subject: the ticket's title, or the task's. */
+export const runTitle = (run: Pick<RunView, 'ticketTitle' | 'task'>) => run.task?.title ?? run.ticketTitle ?? '';
 
 export const STAGE_TEXT: Record<Stage, string> = {
   design: 'Design',

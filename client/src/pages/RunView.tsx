@@ -195,8 +195,12 @@ export function RunView() {
       )
       .finally(() => setBusy(false));
   };
+  const task = run.task;
   const stop = () => {
-    if (!confirm('Stop this run? The ticket gets the workshop/failed label, so it won’t start again until you remove it.')) return;
+    const question = task
+      ? 'Stop this task? Its work is discarded unless it was already pushed.'
+      : 'Stop this run? The ticket gets the workshop/failed label, so it won’t start again until you remove it.';
+    if (!confirm(question)) return;
     act('stop');
   };
   const working = run.status === 'starting' || run.status === 'running';
@@ -206,18 +210,34 @@ export function RunView() {
     <div className="stack">
       <div className="spread">
         <div className="stack" style={{ gap: 4 }}>
-          <h1>
-            {AGENT_LABEL[run.agent]} on {run.ticket}
-          </h1>
-          <a href={run.ticketUrl} target="_blank" rel="noreferrer">
-            {run.ticketTitle}
-          </a>
+          {task ? (
+            <>
+              <h1>Task in {run.repo}</h1>
+              <span className="muted mono small">{task.branch}</span>
+            </>
+          ) : (
+            <>
+              <h1>
+                {AGENT_LABEL[run.agent]} on {run.ticket}
+              </h1>
+              <a href={run.ticketUrl ?? undefined} target="_blank" rel="noreferrer">
+                {run.ticketTitle}
+              </a>
+            </>
+          )}
         </div>
         <div className="row">
-          <Link className="button" to={`/tickets/${run.ticketId}`}>
-            Ticket lifecycle
-          </Link>
-          {run.mediaCount > 0 && (
+          {task?.branchUrl && (
+            <a className="button" href={task.branchUrl} target="_blank" rel="noreferrer">
+              View branch
+            </a>
+          )}
+          {!task && (
+            <Link className="button" to={`/tickets/${run.ticketId}`}>
+              Ticket lifecycle
+            </Link>
+          )}
+          {!task && run.mediaCount > 0 && (
             <Link className="button" to={`/tickets/${run.ticketId}/media?run=${run.id}`}>
               View screenshots ({run.mediaCount})
             </Link>
@@ -288,6 +308,11 @@ export function RunView() {
               <span className="small muted">Read-only, expires in 8 hours. Revoke it in Settings → API tokens. Workshop won't show this token again.</span>
             </div>
           </div>
+        </Panel>
+      )}
+      {task && (
+        <Panel title="Prompt">
+          <p className="prompt panel-body">{task.prompt}</p>
         </Panel>
       )}
       <ErrorNote error={actionError} />

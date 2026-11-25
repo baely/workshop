@@ -9,7 +9,7 @@ import { publish } from '../events.ts';
 import { readClaudeLine, type ClaudeRun } from '../providers/anthropic/index.ts';
 import { environmentOf, getConnection, listConnections, modelsOf, setConnectionStatus } from '../providers/index.ts';
 import { appendLog, deleteLog, getRun, RUNNING_SQL, type RunRow } from '../runs.ts';
-import { check } from '../http/util.ts';
+import { check, HttpError } from '../http/util.ts';
 import { sweepExpiredTokens } from '../http/tokens.ts';
 import { getSettings } from '../settings.ts';
 import { activeRunId, blockersOf, getRepo, getTicket, isAllowedAuthor, labelsOf, setPrioritised, setPush, ticketInScope, type RepoRow, type TicketRow } from '../tickets.ts';
@@ -232,13 +232,20 @@ export function resumePaused(s: Settings, now: number) {
       } else if (r.pause_reason !== 'manual') {
         // Nothing can take it over: start the stage again once a subscription can.
         const name = getConnection(r.model_connection_id)!.name;
-        void abortRun(r.id, `${name} was paused and no other Claude subscription offers ${r.model}, so Workshop stopped this agent. A new one starts this stage again when a subscription is free.`);
+        const why = `${name} was paused and no other Claude subscription offers ${r.model}`;
+        void abortRun(
+          r.id,
+          r.ticket_id === null
+            ? `${why}, so Workshop stopped this task. Start it again from the Tasks page.`
+            : `${why}, so Workshop stopped this agent. A new one starts this stage again when a subscription is free.`,
+        );
         continue;
       }
     }
     if (r.pause_reason === 'manual') continue; // waits for you to resume it (Resume explains a paused subscription)
     // A run moving off a paused subscription was already working, so the operation mode and hours don't hold it.
-    if (modeReason && r.pause_reason !== 'connection' && !getTicket(r.ticket_id)?.push) continue;
+    // Neither do they hold a task or a ticket you pushed: you asked for those.
+    if (modeReason && r.pause_reason !== 'connection' && r.ticket_id !== null && !getTicket(r.ticket_id)?.push) continue;
     // A threshold pause also ends early when you raise that subscription's limits: allowanceBlock below decides.
     if (r.pause_reason !== 'threshold' && r.resets_at && r.resets_at > now) continue;
     if (r.billing === 'subscription' && r.model_connection_id) {
@@ -271,6 +278,7 @@ export interface Candidate {
 function startCandidate(c: Candidate): string | null {
   return launch({
     ticketId: c.ticket.id,
+    repoId: c.repo.id,
     agent: c.agent,
     mode: c.mode,
     attempt: c.ticket.failures + 1,
@@ -343,6 +351,85 @@ const ORDER_SQL: Record<TicketOrder, string> = {
   'created-desc': 'COALESCE(t.created_at, t.updated_at) DESC',
 };
 
+interface Gate {
+  blockedBy: string | null;
+  modelConnectionId: number | null;
+  model: string | null;
+  billing: Billing;
+}
+
+/**
+ * The gates every agent launch passes, ticket or task: a model is chosen, its connection offers the billing,
+ * the API cap or a subscription's allowance, and a free host. Returns the first reason it waits, if any.
+ */
+function agentGate(agent: AgentName, pool: ReturnType<typeof subscriptions>, spentToday: number, s: Settings, hostId: number | null, hosts: HostLoad[]): Gate {
+  const cls = getAgent(agent);
+  const conn = getConnection(cls.model_connection_id);
+  const name = AGENT_INFO[agent].label;
+  const gate = (blockedBy: string | null, connectionId = conn?.id ?? null): Gate => ({ blockedBy, modelConnectionId: connectionId, model: cls.model, billing: cls.billing });
+  if (!cls.model || !conn) return gate(`Choose a model for ${name} on the Agents page`);
+  if (!modelsOf(conn).billing().includes(cls.billing)) return gate(`${conn.name} has no ${cls.billing === 'api' ? 'API key' : 'subscription token'} for ${name}`);
+  let useConnection = conn.id;
+  let blockedBy: string | null;
+  // API-billed agents use their connection's key, paused or not: pausing only manages subscriptions.
+  if (cls.billing === 'api') blockedBy = apiCapBlock(spentToday, s);
+  else {
+    const pick = pickSubscription(offering(pool, conn.provider, cls.model, conn.id));
+    if (pick) {
+      useConnection = pick.id;
+      blockedBy = pick.block;
+    } else if (pool.some((c) => c.provider === conn.provider)) blockedBy = `No Claude subscription that isn't paused offers ${cls.model}. Resume one on the Connections page`;
+    else blockedBy = 'Every Claude subscription is paused. Resume one on the Connections page';
+  }
+  if (!blockedBy && hostId === null) blockedBy = hosts.length ? 'Every agent host is busy or offline' : 'No agent hosts connected';
+  return gate(blockedBy, useConnection);
+}
+
+/** The gates for a task now. The operation mode and hours never hold a task: you started it. */
+function taskGate(): Gate & { hostId: number | null } {
+  const s = getSettings();
+  const now = Date.now();
+  const hosts = hostLoads();
+  const hostId = pickHost(hosts);
+  return { ...agentGate('task', subscriptions(s, now), apiSpendSince(startOfDay(now, s.timezone)), s, hostId, hosts), hostId };
+}
+
+export const MAX_TASK_PROMPT = 20_000;
+
+/**
+ * Starts a task now: the Task agent with your prompt on a repository, outside the ticket workflow. The same
+ * gates as Start now apply; there's no queue, so a closed gate refuses it. A stale allowance reading is read
+ * again first, so an idle instance doesn't refuse with "Checking allowance". Returns the run id.
+ */
+export async function launchTask(p: { repoId: number; prompt: string; browser: boolean }): Promise<string> {
+  const repo = getRepo(p.repoId);
+  check(repo, 'Repository not found.', 404);
+  let gate = taskGate();
+  if (gate.blockedBy === 'Checking allowance' && gate.modelConnectionId) {
+    try {
+      await probeAllowance(gate.modelConnectionId, true);
+    } catch (err) {
+      throw new HttpError(409, `Can't start a task yet: Workshop couldn't read your Claude usage (${(err as Error).message.replace(/\.+$/, '')}).`);
+    }
+    gate = taskGate();
+  }
+  check(!gate.blockedBy, `Can't start a task yet: ${gate.blockedBy}.`, 409);
+  const id = launch({
+    ticketId: null,
+    repoId: repo.id,
+    prompt: p.prompt,
+    browser: p.browser,
+    agent: 'task',
+    mode: 'normal',
+    attempt: 1,
+    environmentId: gate.hostId!,
+    modelConnectionId: gate.modelConnectionId!,
+    model: gate.model!,
+    billing: gate.billing,
+  });
+  return id!;
+}
+
 /** Every ticket Workshop could work on next, in order, each with the reason it's waiting (if any). */
 export function buildQueue(s: Settings = getSettings(), now = Date.now(), opts: { ignoreMode?: boolean } = {}): Candidate[] {
   const hosts = hostLoads();
@@ -366,27 +453,10 @@ export function buildQueue(s: Settings = getSettings(), now = Date.now(), opts: 
     const agent: AgentName = step.kind === 'merge' ? 'merge' : step.agent;
     const mode = step.kind === 'merge' ? 'normal' : step.mode;
     const priorityReason = opts.ignoreMode ? null : priorityBlock(repo.priority, waiting);
-    const cls = getAgent(agent);
-    const conn = getConnection(cls.model_connection_id);
-    const name = AGENT_INFO[agent].label;
-    let blockedBy = dependencyBlock(blockersOf(t)) ?? (t.push ? null : modeReason ?? (t.prioritised ? null : priorityReason));
-    if (!blockedBy && (!cls.model || !conn)) blockedBy = `Choose a model for ${name} on the Agents page`;
-    if (!blockedBy && !modelsOf(conn!).billing().includes(cls.billing)) {
-      blockedBy = `${conn!.name} has no ${cls.billing === 'api' ? 'API key' : 'subscription token'} for ${name}`;
-    }
-    let useConnection = conn;
-    // API-billed agents use their connection's key, paused or not: pausing only manages subscriptions.
-    if (!blockedBy && cls.billing === 'api') blockedBy = apiCapBlock(spentToday, s);
-    else if (!blockedBy) {
-      const pick = pickSubscription(offering(pool, conn!.provider, cls.model!, conn!.id));
-      if (pick) {
-        useConnection = getConnection(pick.id);
-        blockedBy = pick.block;
-      } else if (pool.some((c) => c.provider === conn!.provider)) blockedBy = `No Claude subscription that isn't paused offers ${cls.model}. Resume one on the Connections page`;
-      else blockedBy = 'Every Claude subscription is paused. Resume one on the Connections page';
-    }
-    if (!blockedBy && hostId === null) blockedBy = hosts.length ? 'Every agent host is busy or offline' : 'No agent hosts connected';
-    out.push({ ticket: t, repo, agent, mode, blockedBy, hostId, modelConnectionId: useConnection?.id ?? null, model: cls.model, billing: cls.billing, pushed: Boolean(t.push), prioritised: Boolean(t.prioritised), priority: stepPriority(step), repoPriority: repo.priority });
+    const ticketReason = dependencyBlock(blockersOf(t)) ?? (t.push ? null : modeReason ?? (t.prioritised ? null : priorityReason));
+    const gate = agentGate(agent, pool, spentToday, s, hostId, hosts);
+    const blockedBy = ticketReason ?? gate.blockedBy;
+    out.push({ ticket: t, repo, agent, mode, blockedBy, hostId, modelConnectionId: gate.modelConnectionId, model: gate.model, billing: gate.billing, pushed: Boolean(t.push), prioritised: Boolean(t.prioritised), priority: stepPriority(step), repoPriority: repo.priority });
   }
   // The sort is stable, so the ticket order setting (from the query) decides ties.
   return out.sort((a, b) => Number(b.pushed) - Number(a.pushed) || Number(b.prioritised) - Number(a.prioritised) || b.repoPriority - a.repoPriority || a.priority - b.priority);

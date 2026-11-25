@@ -7,7 +7,13 @@ import { all, one } from './db.ts';
 
 export interface RunRow {
   id: string;
-  ticket_id: number;
+  /** Null for a task: a run started with your own prompt, outside the ticket workflow. */
+  ticket_id: number | null;
+  repo_id: number;
+  /** A task's prompt; null for ticket runs. */
+  prompt: string | null;
+  /** A task that asked for the browser image (0 or 1). */
+  browser: number;
   agent: AgentName;
   mode: 'normal' | 'delta';
   attempt: number;
@@ -58,13 +64,36 @@ export const RUNNING_SQL = "status IN ('starting', 'running', 'publishing')";
 export const getRun = (id: string) => one<RunRow>('SELECT * FROM runs WHERE id = ?', id);
 
 const VIEW_SQL = `
-  SELECT runs.*, (SELECT COUNT(*) FROM media m WHERE m.run_id = runs.id) AS media_count, t.number, t.title, t.url AS ticket_url, r.full_name, c.name AS env_name
+  SELECT runs.*, (SELECT COUNT(*) FROM media m WHERE m.run_id = runs.id) AS media_count, t.number, t.title, t.url AS ticket_url, r.full_name, r.url AS repo_url, c.name AS env_name
   FROM runs
-  JOIN tickets t ON t.id = runs.ticket_id
-  JOIN repos r ON r.id = t.repo_id
+  LEFT JOIN tickets t ON t.id = runs.ticket_id
+  JOIN repos r ON r.id = runs.repo_id
   LEFT JOIN connections c ON c.id = runs.environment_id`;
 
-type ViewRow = RunRow & { media_count: number; number: number; title: string; ticket_url: string; full_name: string; env_name: string | null };
+type ViewRow = RunRow & { media_count: number; number: number | null; title: string | null; ticket_url: string | null; full_name: string; repo_url: string; env_name: string | null };
+
+/** The branch a task works on. */
+export const taskBranch = (runId: string) => `workshop/task-${runId.slice(0, 8)}`;
+
+const TITLE_MAX = 80;
+
+/** A task's title: the prompt's first non-empty line, shortened to 80 characters. */
+export function taskTitle(prompt: string): string {
+  const line = prompt.split('\n').map((l) => l.trim()).find(Boolean) ?? '';
+  return line.length > TITLE_MAX ? `${line.slice(0, TITLE_MAX - 1).trimEnd()}…` : line;
+}
+
+function taskInfo(r: ViewRow): RunView['task'] {
+  if (r.prompt === null) return null;
+  const branch = taskBranch(r.id);
+  let ahead = 0;
+  try {
+    ahead = Number((JSON.parse(r.publish_state ?? 'null') as { pushed?: { ahead?: number } } | null)?.pushed?.ahead ?? 0);
+  } catch {
+    // no push report
+  }
+  return { prompt: r.prompt, title: taskTitle(r.prompt), branch, branchUrl: ahead > 0 ? `${r.repo_url}/tree/${branch}` : null };
+}
 
 /** Latest activity of running agents; in memory only, as it changes every few seconds. */
 export const activity = new Map<string, string>();
@@ -73,9 +102,12 @@ function toView(r: ViewRow): RunView {
   return {
     id: r.id,
     ticketId: r.ticket_id,
-    ticket: `${r.full_name}#${r.number}`,
-    ticketTitle: r.title,
-    ticketUrl: r.ticket_url,
+    ticket: r.ticket_id === null ? null : `${r.full_name}#${r.number}`,
+    ticketTitle: r.ticket_id === null ? null : r.title,
+    ticketUrl: r.ticket_id === null ? null : r.ticket_url,
+    repo: r.full_name,
+    environmentId: r.environment_id,
+    task: taskInfo(r),
     agent: r.agent,
     mode: r.mode,
     attempt: r.attempt,

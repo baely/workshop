@@ -136,7 +136,18 @@ const REVIEW_SCHEMA = {
   required: [...WORK_SCHEMA.required, 'findings'],
 };
 
-const SCHEMAS: Partial<Record<AgentName, object>> = { classifier: CLASSIFIER_SCHEMA, 'code-review': REVIEW_SCHEMA };
+/** A task's result: the work result without media (tasks have no media store), and with nothing about tickets. */
+const TASK_SCHEMA = {
+  ...WORK_SCHEMA,
+  properties: {
+    outcome: WORK_SCHEMA.properties.outcome,
+    summary: { type: 'string', description: "What you did, briefly. Shown to the owner on the run's page." },
+    questions: { ...questions, description: 'Specific questions for the owner, who answers them in a new task (needs_info only).' },
+    tests: WORK_SCHEMA.properties.tests,
+  },
+};
+
+const SCHEMAS: Partial<Record<AgentName, object>> = { classifier: CLASSIFIER_SCHEMA, 'code-review': REVIEW_SCHEMA, task: TASK_SCHEMA };
 
 export const schemaFor = (agent: AgentName) => SCHEMAS[agent] ?? WORK_SCHEMA;
 
