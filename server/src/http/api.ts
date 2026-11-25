@@ -225,7 +225,8 @@ apiRouter.post('/tasks', async (req, res) => {
   const b = req.body ?? {};
   const repoId = int(b.repoId, 'Repository id', 1, Number.MAX_SAFE_INTEGER);
   const prompt = typeof b.prompt === 'string' ? b.prompt.trim() : '';
-  check(prompt.length >= 1 && prompt.length <= MAX_TASK_PROMPT, 'Describe the task in under 20,000 characters.');
+  check(prompt.length >= 1, 'Describe the task for the agent.');
+  check(prompt.length <= MAX_TASK_PROMPT, 'Describe the task in under 20,000 characters.');
   check(b.browser === undefined || typeof b.browser === 'boolean', 'browser must be true or false.');
   const id = await launchTask({ repoId, prompt, browser: b.browser === true });
   kick();

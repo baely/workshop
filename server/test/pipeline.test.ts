@@ -2962,6 +2962,16 @@ describe('tasks', () => {
       expect((await settle(id)).status).toBe('succeeded');
     });
 
+    it('waits for an allowance check that is already running', async () => {
+      run('DELETE FROM allowance_samples');
+      fake.env = new FakeEnv({ ...pushed({ ahead: 0 }), usage: [RATE, result({})] });
+      const tick = probeAllowance(ids.model);
+      const id = await start();
+      await tick;
+      expect(fake.env.started.filter((s: StepSpec) => s.cmd[0] === 'usage-probe')).toHaveLength(1);
+      expect((await settle(id)).status).toBe('succeeded');
+    });
+
     it("refuses with the probe's reason when the allowance can't be read", async () => {
       run('DELETE FROM allowance_samples');
       fake.env = new FakeEnv({ usage: [line({ type: 'result', subtype: 'success', is_error: true, result: 'Invalid bearer token', usage: {} })] });

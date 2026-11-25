@@ -634,10 +634,10 @@ describe('tasks', () => {
   it.each([
     [{ prompt: 'Do it' }, 'Repository id must be a whole number'],
     [{ repoId: 'x', prompt: 'Do it' }, 'Repository id must be a whole number'],
-    [{ repoId: 1 }, 'Describe the task in under 20,000 characters.'],
-    [{ repoId: 1, prompt: '   ' }, 'Describe the task in under 20,000 characters.'],
+    [{ repoId: 1 }, 'Describe the task for the agent.'],
+    [{ repoId: 1, prompt: '   ' }, 'Describe the task for the agent.'],
     [{ repoId: 1, prompt: 'x'.repeat(20_001) }, 'Describe the task in under 20,000 characters.'],
-    [{ repoId: 1, prompt: 7 }, 'Describe the task in under 20,000 characters.'],
+    [{ repoId: 1, prompt: 7 }, 'Describe the task for the agent.'],
     [{ repoId: 1, prompt: 'Do it', browser: 'yes' }, 'browser must be true or false.'],
   ])('refuses %j', async (body, message) => {
     const res = await post(body);

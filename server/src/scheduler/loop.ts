@@ -30,6 +30,8 @@ let clock: ClockState | null = null;
 const lastSync = new Map<number, number>();
 const hostFailures = new Map<number, number>();
 const probing = new Set<number>();
+/** Allowance checks in flight, so a task can wait for one that's already running. */
+const probes = new Map<number, Promise<unknown>>();
 const probeFailedAt = new Map<number, number>();
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -407,7 +409,9 @@ export async function launchTask(p: { repoId: number; prompt: string; browser: b
   let gate = taskGate();
   if (gate.blockedBy === 'Checking allowance' && gate.modelConnectionId) {
     try {
-      await probeAllowance(gate.modelConnectionId, true);
+      // Wait for a check that's already running (the tick's, or Refresh) rather than refusing meanwhile.
+      const running = probes.get(gate.modelConnectionId);
+      await (running ?? probeAllowance(gate.modelConnectionId, true));
     } catch (err) {
       throw new HttpError(409, `Can't start a task yet: Workshop couldn't read your Claude usage (${(err as Error).message.replace(/\.+$/, '')}).`);
     }
@@ -485,8 +489,14 @@ export const forgetProbe = (connectionId: number) => probeFailedAt.delete(connec
 /** The last allowance check of this connection failed less than 10 minutes ago. */
 const probeFailing = (connectionId: number, now: number) => now - (probeFailedAt.get(connectionId) ?? 0) < 10 * 60_000;
 
-export async function probeAllowance(connectionId: number, force = false) {
-  if (probing.has(connectionId)) return;
+export function probeAllowance(connectionId: number, force = false) {
+  if (probing.has(connectionId)) return Promise.resolve(undefined);
+  const probe = readAllowance(connectionId, force);
+  probes.set(connectionId, probe);
+  return probe.finally(() => probes.delete(connectionId));
+}
+
+async function readAllowance(connectionId: number, force: boolean) {
   if (!force && probeFailing(connectionId, Date.now())) return;
   const conn = getConnection(connectionId);
   if (!conn?.secret.oauthToken) throw new Error('This Claude connection has no subscription token.');

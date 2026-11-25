@@ -136,7 +136,7 @@ export function backfillSpend(schema: 'main' | 'src' = 'main'): { filled: number
                 repos.full_name, runs.agent, tickets.number, connections.id, connections.name
          FROM ${schema}.runs
          LEFT JOIN ${schema}.tickets ON tickets.id = runs.ticket_id
-         LEFT JOIN ${schema}.repos ON repos.id = tickets.repo_id
+         LEFT JOIN ${schema}.repos ON repos.id = ${schema === 'main' ? 'COALESCE(runs.repo_id, tickets.repo_id)' : 'tickets.repo_id'}
          LEFT JOIN ${schema}.connections ON connections.id = runs.model_connection_id
          WHERE (runs.input_tokens IS NOT NULL OR runs.output_tokens IS NOT NULL OR runs.cost_usd IS NOT NULL)
            AND runs.id NOT IN (SELECT run_id FROM main.spend)`,

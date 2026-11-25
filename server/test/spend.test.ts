@@ -36,6 +36,13 @@ describe('backfillSpend', () => {
     expect(backfillSpend('main')).toEqual({ filled: 0, added: 0 });
   });
 
+  it("adds a task's missing row with its repository and no ticket", () => {
+    const repo = one<{ id: number }>('SELECT id FROM repos')!.id;
+    run("INSERT INTO runs (id, ticket_id, repo_id, prompt, agent, attempt, model, billing, status, input_tokens, started_at) VALUES ('task', NULL, ?, 'Do it', 'task', 1, 'm', 'api', 'succeeded', 3, 5)", repo);
+    expect(backfillSpend('main')).toEqual({ filled: 0, added: 1 });
+    expect(spendOf('task')).toEqual({ repo: 'me/app', agent: 'task', ticket: null });
+  });
+
   it('recovers deleted runs from an attached older database', () => {
     const file = path.join(process.env.DATA_DIR!, 'old.db');
     fs.rmSync(file, { force: true });
