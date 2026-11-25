@@ -298,6 +298,7 @@ pre,
 /* A task's prompt, as the owner wrote it: plain text, never Markdown. */
 .prompt {
   margin: 0;
+  max-width: none;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   background: var(--raised);

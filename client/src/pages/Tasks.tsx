@@ -51,9 +51,9 @@ export function Tasks() {
               <span>What should the agent do?</span>
               <textarea rows={8} value={prompt} onChange={(e) => setPrompt(e.target.value)} maxLength={20_000} required />
             </label>
-            <label className="row" style={{ gap: 4 }}>
+            <label className="row" style={{ gap: 6, flexWrap: 'nowrap', alignItems: 'baseline' }}>
               <input type="checkbox" checked={browser} onChange={(e) => setBrowser(e.target.checked)} />
-              Give it a browser (Playwright with Chromium)
+              <span>Give it a browser (Playwright with Chromium)</span>
             </label>
             <ErrorNote error={problem} />
             <div className="row">
@@ -102,7 +102,7 @@ export function Tasks() {
                       )}
                     </td>
                     <td className="small">{r.environment ?? '–'}</td>
-                    <td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
                       <Status tone={runStatus(r).tone}>{runStatus(r).label}</Status>
                     </td>
                     <td className="small">{duration(r.startedAt, r.endedAt ?? now)}</td>
