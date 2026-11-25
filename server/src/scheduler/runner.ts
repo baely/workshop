@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import type { AgentName, Billing } from '../api-types.ts';
 import { getAgent, promptFor, type AgentRow } from '../agents.ts';
 import { clearAlert, raiseAlert } from '../alerts.ts';
-import { allowanceOf, recordLimit, recordProbe } from '../allowance.ts';
+import { allowanceOf, DEFAULT_LIMITS, recordLimit, recordProbe } from '../allowance.ts';
 import { config } from '../config.ts';
 import { all, run } from '../db.ts';
 import { publish } from '../events.ts';
@@ -52,7 +52,7 @@ type StepName = 'prepare' | 'run' | 'publish';
 class HostUnreachable extends Error {}
 
 const USAGE_RECORD_MS = 30_000;
-/** How long a run over the thresholds may wait for its open tool calls (a long subagent) before it's stopped anyway. */
+/** How long a run over its subscription's limits may wait for its open tool calls (a long subagent) before it's stopped anyway. */
 export const PAUSE_GRACE_MS = 10 * 60_000;
 const driving = new Set<string>();
 export const isDriving = (id: string) => driving.has(id);
@@ -346,16 +346,17 @@ async function runAgent(ctx: Ctx): Promise<boolean> {
     recordedAt = Date.now();
     recordProbe(r.model_connection_id, claude.usage.fiveHour, claude.usage.sevenDay);
   };
-  // Over the thresholds in Settings: judged on this run's own reading and the account's latest fresh one,
+  // Over its subscription's limits: judged on this run's own reading and the account's latest fresh one,
   // which other runs and probes keep current.
   const overThreshold = () => {
     if (r.billing !== 'subscription' || claude.result) return null;
     const s = getSettings();
     const now = Date.now();
-    const own = claude.usage ? thresholdBlock(claude.usage, s, now) : null;
-    if (own || !r.model_connection_id) return own;
-    const stored = allowanceOf(r.model_connection_id);
-    return stored.sampledAt && now - stored.sampledAt <= ALLOWANCE_MAX_AGE_MS ? thresholdBlock(stored, s, now) : null;
+    const stored = r.model_connection_id ? allowanceOf(r.model_connection_id) : null;
+    const limits = stored?.limits ?? DEFAULT_LIMITS;
+    const own = claude.usage ? thresholdBlock(claude.usage, limits, s, now) : null;
+    if (own || !stored) return own;
+    return stored.sampledAt && now - stored.sampledAt <= ALLOWANCE_MAX_AGE_MS ? thresholdBlock(stored, limits, s, now) : null;
   };
   // Why the agent should stop at the next turn boundary, if it should. A pause you asked for wins, then a
   // paused subscription (the tick moves the run to another one).
@@ -712,7 +713,7 @@ export function launch(p: {
 }
 
 /**
- * Continues a paused run (usage limit, thresholds, by hand or a paused subscription) in the same Claude session
+ * Continues a paused run (usage limit, its subscription's limits, by hand or a paused subscription) in the same Claude session
  * on the same host, with the credentials of the connection it's on now (another subscription, after a move).
  */
 export function resume(runId: string) {
