@@ -44,6 +44,10 @@ curl $WORKSHOP/api/usage/lifetime -H "Authorization: Bearer $TOKEN"
 # Start an agent on a ticket now (ticket id from GET /api/tickets)
 curl -X POST $WORKSHOP/api/tickets/12/launch -H "Authorization: Bearer $TOKEN"
 
+# Start a task: an agent with your own prompt on a repository, outside the ticket workflow (repo id from GET /api/tasks)
+curl -X POST $WORKSHOP/api/tasks -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"repoId": 3, "prompt": "Find out why the sync is slow and fix it.", "browser": false}'
+
 # Push a ticket along while Workshop is paused (scope: stage or lifecycle)
 curl -X POST $WORKSHOP/api/tickets/12/push -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -d '{"scope":"lifecycle"}'
@@ -71,6 +75,18 @@ Usage limits are set per subscription. `PUT /api/settings` with the old global `
 ## Launching
 
 `POST /api/tickets/:id/launch` starts whatever agent the ticket is due next and answers 202 with the run. It ignores the operation mode and operating hours, so it works while Workshop is paused. Every other check still applies: dependencies, a chosen model, the Claude allowance, the API cap and a free agent host. If one blocks the launch you get 409 with the reason.
+
+## Tasks
+
+A task is an agent run with no ticket: the Task agent, with your prompt, on one repository. `GET /api/tasks` lists the repositories (`repos`) and every task still kept (`tasks`, newest first). `POST /api/tasks` with `{"repoId": 3, "prompt": "…", "browser": false}` starts one and answers 202 with the run; `browser: true` gives the agent the browser image (Playwright with Chromium).
+
+- **It starts now or not at all.** Like launching a ticket, it ignores the operation mode and hours. The Task agent's model (Agents page), the Claude allowance, the API cap and a free agent host still apply. There's no queue: if one of them blocks the task you get 409 with the reason, for example `Can't start a task yet: Every agent host is busy or offline.` When the subscription's usage reading is stale, Workshop reads it first, so the request can take a few seconds.
+- **It works on a new branch**, `workshop/task-<first 8 characters of the run id>`, made from the default branch. Workshop pushes it only if the agent committed something, and never opens a pull request, edits labels or comments. `task.branchUrl` links to the branch once it's pushed.
+- **The agent's outcome sets the status.** `done` and `needs_info` succeed; a `needs_info` result's questions are added to `summary` (answer them by starting a new task). `failed` pushes any commits, then ends the run `failed` with the agent's summary as `error`.
+- **Tasks have no media store**, so screenshots a task takes are not kept.
+- **The prompt is stored with the run** and returned in `task.prompt`, which read-only tokens can read too. Don't put long-lived secrets in it. If the agent needs to look at this instance, paste the read-only, 8-hour token from **Give Claude access**.
+
+Tasks also appear in `GET /api/runs` and under `running` in `/api/overview`. On a task's `RunView`, `ticketId`, `ticket`, `ticketTitle` and `ticketUrl` are null; `repo` names the repository and `task` holds the prompt, title and branch. `task` is null for ticket runs.
 
 ## Checking now
 

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { addNeeds, applyEdits, branchFor, describeStep, labelDiff, imageFor, label, nextStep, parseLabels, stageAfterClassify, stateEdits } from '../src/workflow/labels.ts';
 import { parseResult, schemaFor, type Finding, type Rescue } from '../src/workflow/schemas.ts';
 import { MAX_FINDINGS_SHOWN, planTransition, reviewSection, stageForRework, type PlanContext } from '../src/workflow/transitions.ts';
-import { capabilitiesOf, DEFAULT_PROMPTS, environmentText, protocolText, taskPrompt } from '../src/workflow/prompts.ts';
+import { capabilitiesOf, DEFAULT_PROMPTS, environmentText, protocolText, taskPrompt, taskProtocolText } from '../src/workflow/prompts.ts';
+import { taskBranch, taskTitle } from '../src/runs.ts';
 import { stepPriority } from '../src/scheduler/gates.ts';
 
 const step = (labels: string[], open = true) => nextStep(parseLabels(labels), open);
@@ -645,5 +646,49 @@ describe('code review', () => {
       expect(reviewer).not.toContain('Workshop pushes it');
       expect(reviewer).toContain('Workshop discards this container');
     });
+  });
+});
+
+describe('tasks', () => {
+  const images = { repo: null, base: 'base', browser: 'browser' };
+
+  it('gets the browser image only when asked, and a repository image always wins', () => {
+    expect(imageFor('task', parseLabels([]), images)).toBe('base');
+    expect(imageFor('task', parseLabels([label.needs('browser')]), images)).toBe('base');
+    expect(imageFor('task', parseLabels([]), images, true)).toBe('browser');
+    expect(imageFor('task', parseLabels([]), { ...images, repo: 'mine' }, true)).toBe('mine');
+  });
+
+  it('is titled by the first line of its prompt, shortened to 80 characters', () => {
+    expect(taskTitle('\n  Fix the login bug  \nIt fails on Safari.')).toBe('Fix the login bug');
+    const long = taskTitle('x'.repeat(100));
+    expect(long).toHaveLength(80);
+    expect(long.endsWith('…')).toBe(true);
+    expect(taskTitle('y'.repeat(80))).toBe('y'.repeat(80));
+  });
+
+  it('works on a branch named after its run', () => {
+    expect(taskBranch('0123abcd-ffff-4444-8888-000000000000')).toBe('workshop/task-0123abcd');
+  });
+
+  it('validates its result like a work result, and its schema has no media or ticket', () => {
+    expect(parseResult('task', { outcome: 'done', summary: 's' })).toMatchObject({ outcome: 'done' });
+    expect(parseResult('task', { outcome: 'needs_info', summary: 's' })).toBe('needs_info requires at least one question.');
+    const schema = schemaFor('task') as { properties: Record<string, { description?: string }> };
+    expect(Object.keys(schema.properties)).toEqual(['outcome', 'summary', 'questions', 'tests']);
+    expect(JSON.stringify(schema)).not.toMatch(/ticket|pull request/);
+  });
+
+  it('names the branch in its protocol and opens no pull request', () => {
+    const text = taskProtocolText({ branch: 'workshop/task-0123abcd', base: 'main' });
+    expect(text).toContain('`workshop/task-0123abcd`, made from `origin/main`');
+    expect(text).toContain("It doesn't open a pull request.");
+    expect(text).toContain('no git credentials');
+    expect(text).not.toContain('ticket');
+  });
+
+  it('tells a task about the browser without a media folder or labels', () => {
+    expect(environmentText(['browser'], undefined, true)).not.toContain('/work/media');
+    expect(environmentText([], undefined, true)).not.toContain('needs:browser');
   });
 });

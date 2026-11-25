@@ -572,6 +572,7 @@ describe('OpenAPI', () => {
     ['/settings', 'Settings'],
     ['/usage', 'Usage'],
     ['/usage/lifetime', 'LifetimeSpend'],
+    ['/tasks', 'TasksView'],
   ])('%s matches its schema fields', async (path, name) => {
     const res = await request(app).get(`/api${path}`).set('cookie', cookie);
     const props = Object.keys((OPENAPI.components.schemas[name] as { properties: object }).properties);
@@ -590,6 +591,74 @@ describe('OpenAPI', () => {
     const res = await request(app).get('/api/agents').set('cookie', cookie);
     const props = Object.keys((OPENAPI.components.schemas.AgentClassView as { properties: object }).properties);
     expect(Object.keys(res.body[0]).sort()).toEqual(props.sort());
+  });
+});
+
+describe('tasks', () => {
+  let repo = 0;
+  const post = (body: object) => request(app).post('/api/tasks').set('cookie', cookie).send(body);
+
+  beforeAll(() => {
+    const conn = Number(run("INSERT INTO connections (kind, provider, name, config, secret, status, created_at, updated_at) VALUES ('vcs', 'github', 'GH tasks', '{}', '', 'ok', 0, 0)").lastInsertRowid);
+    repo = Number(run("INSERT INTO repos (vcs_connection_id, full_name, default_branch, url, enabled) VALUES (?, 'me/tasks', 'main', 'https://github.com/me/tasks', 0)", conn).lastInsertRowid);
+    run(
+      `INSERT INTO runs (id, ticket_id, repo_id, prompt, agent, attempt, model, billing, status, publish_state, started_at)
+       VALUES ('task-1', NULL, ?, ?, 'task', 1, 'm', 'subscription', 'succeeded', ?, 5)`,
+      repo,
+      'Look into the slow sync\nIt takes minutes.',
+      JSON.stringify({ pushed: { before: '', after: 'abc', ahead: 1 } }),
+    );
+  });
+
+  it('lists every repository and the tasks, with no ticket fields', async () => {
+    const res = await request(app).get('/api/tasks').set('cookie', cookie);
+    expect(res.status).toBe(200);
+    expect(res.body.repos).toContainEqual({ id: repo, fullName: 'me/tasks' });
+    expect(res.body.tasks).toHaveLength(1);
+    const task = res.body.tasks[0];
+    expect(task).toMatchObject({
+      id: 'task-1',
+      ticketId: null,
+      ticket: null,
+      ticketTitle: null,
+      ticketUrl: null,
+      repo: 'me/tasks',
+      agent: 'task',
+      task: { prompt: 'Look into the slow sync\nIt takes minutes.', title: 'Look into the slow sync', branch: 'workshop/task-task-1', branchUrl: 'https://github.com/me/tasks/tree/workshop/task-task-1' },
+    });
+    expect(Object.keys(task).sort()).toEqual(Object.keys((OPENAPI.components.schemas.RunView as { properties: object }).properties).sort());
+    // Tasks show among the runs too, but never on a ticket.
+    expect((await request(app).get('/api/runs').set('cookie', cookie)).body.map((r: { id: string }) => r.id)).toContain('task-1');
+  });
+
+  it.each([
+    [{ prompt: 'Do it' }, 'Repository id must be a whole number'],
+    [{ repoId: 'x', prompt: 'Do it' }, 'Repository id must be a whole number'],
+    [{ repoId: 1 }, 'Describe the task in under 20,000 characters.'],
+    [{ repoId: 1, prompt: '   ' }, 'Describe the task in under 20,000 characters.'],
+    [{ repoId: 1, prompt: 'x'.repeat(20_001) }, 'Describe the task in under 20,000 characters.'],
+    [{ repoId: 1, prompt: 7 }, 'Describe the task in under 20,000 characters.'],
+    [{ repoId: 1, prompt: 'Do it', browser: 'yes' }, 'browser must be true or false.'],
+  ])('refuses %j', async (body, message) => {
+    const res = await post(body);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain(message);
+  });
+
+  it('refuses an unknown repository, and says why it cannot start one now', async () => {
+    const unknown = await post({ repoId: 99_999, prompt: 'Do it' });
+    expect(unknown.status).toBe(404);
+    expect(unknown.body.error).toBe('Repository not found.');
+    const closed = await post({ repoId: repo, prompt: 'Do it', browser: true });
+    expect(closed.status).toBe(409);
+    expect(closed.body.error).toBe("Can't start a task yet: Choose a model for Task on the Agents page.");
+    expect(one<{ n: number }>('SELECT COUNT(*) AS n FROM runs WHERE ticket_id IS NULL')!.n).toBe(1);
+  });
+
+  it('keeps a read-only token out', async () => {
+    const token = (await request(app).post('/api/tokens').set('cookie', cookie).send({ name: 'tasks', scope: 'read' })).body.token;
+    expect((await request(app).post('/api/tasks').set('authorization', `Bearer ${token}`).send({ repoId: repo, prompt: 'Do it' })).status).toBe(403);
+    expect((await request(app).get('/api/tasks').set('authorization', `Bearer ${token}`)).status).toBe(200);
   });
 });
 

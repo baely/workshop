@@ -46,6 +46,7 @@ The Workshop server: TypeScript run directly by Node 24 (`node src/index.ts`), E
 - Side effects happen only in `publishRun`, from `planTransition`'s plan. Agents never apply labels.
 - The Code reviewer never publishes (no `publish` container, so it's never rescued). Implementation's publish stores its result in `tickets.handoff`; the Code reviewer's run opens the pull request from it, and clears it last. `tickets.rework` holds the automatic rework count and severe findings for the current review round. It's written before the label edit and cleared only in the run's last update. It records the handoff's run id, and a rework only counts once a newer handoff exists: a review retried after a partial failure sends the ticket back again instead of using up the round, and one retried after the round is used opens the pull request.
 - A temporary GitHub error in `publishRun` (`isTransient`: 5xx, 429, network) keeps the run `publishing` with `publish_retry_at` (after 1, 5, 15, then every 30 minutes), and `reattachRuns` re-drives it when due. Waiting runs don't hold a host slot. `publish_state` freezes the plan, the labels it was made from and the push report, and records finished steps, so a new side effect in `publishRun` must go inside a `step(...)` unless it's idempotent. After 6 hours of failures it goes through `fail()` with a `publish-failed` alert.
+- **Tasks** (the Tasks page, `POST /api/tasks`) are runs with `ticket_id` NULL, plus `repo_id` (set on every run) and the owner's `prompt`. They use the `task` agent class, start through `loop.launchTask` (the same `agentGate` as the queue, no queue of their own) and publish through `publishTask`, which pushes `workshop/task-<id>` only when it has commits (`SKIP_EMPTY`). They never touch labels, comments, pull requests or failure counts, so anything in the runner that reads `ctx.ticket` must handle null.
 - `fail()` increments `tickets.failures` (temporary publish errors never reach it). At `MAX_ATTEMPTS` (2) it adds `workshop/failed` plus a comment. Sync resets the count when you remove the label.
 
 ## Invariants: don't break these
@@ -113,7 +114,7 @@ podman run --rm -v wtest:/work -e PUSH_URL=/work/remote.git -e BRANCH=workshop/1
 
 ## Database
 
-Add a schema change as a **new entry** at the end of `MIGRATIONS` in `db.ts`. Never edit an entry that has shipped. Booleans are integers; JSON lives in text columns; times are epoch milliseconds, except `updated_at` and `synced_at`, which mirror GitHub's ISO strings.
+Add a schema change as a **new entry** at the end of `MIGRATIONS` in `db.ts`. Never edit an entry that has shipped. `runs` was rebuilt in the tasks migration (#102) to make `ticket_id` nullable, so a later rebuild must start from that definition (`test/db.test.ts` checks every column survives). Booleans are integers; JSON lives in text columns; times are epoch milliseconds, except `updated_at` and `synced_at`, which mirror GitHub's ISO strings.
 
 ## Testing
 

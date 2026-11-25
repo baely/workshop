@@ -260,10 +260,15 @@ export function capabilitiesOf(labels: Record<string, string>): string[] {
 export const ENVIRONMENT_LABEL = 'workshop.environment';
 
 /** What the agent's container can do, for the system prompt. `note` is the image's own description (its `workshop.environment` label). */
-export function environmentText(caps: string[], note?: string): string {
-  const browser = caps.includes('browser')
-    ? 'A headless Chromium is available through Playwright (installed globally; browsers in $PLAYWRIGHT_BROWSERS_PATH). For a screenshot, start the app and run `playwright screenshot --full-page <url> <file>.png`; for scripted checks, `require(\'playwright\')` from a CommonJS script (`.cjs`: the global install resolves through NODE_PATH, which `import` ignores). Browsers for the last few Playwright minor versions are preinstalled, so a repository\'s own pinned `playwright` should find its Chromium; if it reports a missing executable, run `npx playwright install chromium` once. Everything left under /work/repo is committed and pushed when you finish, so save screenshots to /work/media/ (Workshop keeps them and shows them to the owner), not under /work/repo, unless you mean to commit them.'
-    : 'No browser is installed in this environment. If the task needs one (screenshots, browser tests), do the rest and say in your summary what you couldn\'t check. Workshop runs Implementation with a browser when the ticket has the `workshop/needs:browser` label, so suggest that the owner add it.';
+export function environmentText(caps: string[], note?: string, task = false): string {
+  // A task has no media store, and the owner gives it a browser on the Tasks page, not with a label.
+  const browser = task
+    ? caps.includes('browser')
+      ? "A headless Chromium is available through Playwright (installed globally; browsers in $PLAYWRIGHT_BROWSERS_PATH). For a screenshot, start the app and run `playwright screenshot --full-page <url> <file>.png`; for scripted checks, `require('playwright')` from a CommonJS script (`.cjs`: the global install resolves through NODE_PATH, which `import` ignores). Workshop keeps no screenshots from a task, so describe what you saw in your summary, and don't commit screenshots unless the prompt asks for them."
+      : "No browser is installed in this environment. If the task needs one (screenshots, browser tests), do the rest and say in your summary what you couldn't check. The owner can start the task again with a browser."
+    : caps.includes('browser')
+      ? 'A headless Chromium is available through Playwright (installed globally; browsers in $PLAYWRIGHT_BROWSERS_PATH). For a screenshot, start the app and run `playwright screenshot --full-page <url> <file>.png`; for scripted checks, `require(\'playwright\')` from a CommonJS script (`.cjs`: the global install resolves through NODE_PATH, which `import` ignores). Browsers for the last few Playwright minor versions are preinstalled, so a repository\'s own pinned `playwright` should find its Chromium; if it reports a missing executable, run `npx playwright install chromium` once. Everything left under /work/repo is committed and pushed when you finish, so save screenshots to /work/media/ (Workshop keeps them and shows them to the owner), not under /work/repo, unless you mean to commit them.'
+      : 'No browser is installed in this environment. If the task needs one (screenshots, browser tests), do the rest and say in your summary what you couldn\'t check. Workshop runs Implementation with a browser when the ticket has the `workshop/needs:browser` label, so suggest that the owner add it.';
   const other = caps.filter((c) => c !== 'browser');
   const own = note?.trim() ? `\n\nThis repository's image says: ${note.trim().slice(0, 2000)}` : '';
   return `## Environment\n\n${browser}${other.length ? `\n\nOther capabilities declared by this image: ${other.join(', ')}.` : ''}${own}`;

@@ -246,7 +246,7 @@ async function runSpec(ctx: Ctx, agent: AgentRow) {
   if (r.resumes === 0 && !ctx.ticket) {
     // A task: the owner's prompt, verbatim, with no ticket, comments or media.
     const imageLabels: Record<string, string> = await ctx.env.imageLabels(ctx.image).catch(() => ({}));
-    const environment = environmentText(capabilitiesOf(imageLabels), imageLabels[ENVIRONMENT_LABEL]);
+    const environment = environmentText(capabilitiesOf(imageLabels), imageLabels[ENVIRONMENT_LABEL], true);
     files['.workshop/system.md'] = `${promptFor(agent)}\n\n${taskProtocolText({ branch: branchFor(ctx), base: ctx.repo.default_branch })}\n\n${environment}`;
     files['.workshop/prompt.md'] = r.prompt ?? '';
   } else if (r.resumes === 0 && ctx.ticket) {

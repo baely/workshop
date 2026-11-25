@@ -26,7 +26,7 @@ const { bus } = await import('../src/events.ts');
 const { activity, getRun, readLog, runView } = await import('../src/runs.ts');
 const { sweepMedia } = await import('../src/media.ts');
 const { connectionPaused, drive, isDriving, launch, PAUSE_GRACE_MS, requestPause, resume } = await import('../src/scheduler/runner.ts');
-const { buildQueue, forgetProbe, hostLoads, launchNow, mergeApproved, probeAllowance, reattachRuns, refreshNow, resumeNow, resumePaused, settleManual } = await import('../src/scheduler/loop.ts');
+const { buildQueue, forgetProbe, hostLoads, launchNow, launchTask, mergeApproved, probeAllowance, reattachRuns, refreshNow, resumeNow, resumePaused, settleManual } = await import('../src/scheduler/loop.ts');
 const { setPrioritised, setPush, getTicket, ticketView, getRepo } = await import('../src/tickets.ts');
 const { syncRepo } = await import('../src/scheduler/sync.ts');
 const { getSettings, saveSettings } = await import('../src/settings.ts');
@@ -2819,5 +2819,171 @@ describe('media store', () => {
       sweepMedia(0);
       expect(fs.existsSync(path.join(config.dataDir, 'media', '999'))).toBe(false);
     });
+  });
+});
+
+describe('tasks', () => {
+  const PROMPT = 'Find out why the dashboard shows the wrong host.\n\nThe error is "slot busy".';
+  const pushed = (report: object) => ({ prepare: ['ok'], run: [RATE, result({ outcome: 'done', summary: 'Fixed the host count.', tests: 'npm test: 3 passed' })], publish: [line(report)] });
+  const fresh = () => recordProbe(ids.model, { pct: 10, resetsAt: Date.now() + 3600_000 }, { pct: 10, resetsAt: Date.now() + 86400_000 });
+  const start = (browser = false) => launchTask({ repoId: 1, prompt: PROMPT, browser });
+
+  beforeEach(() => {
+    setConnectionStatus(ids.env, 'ok');
+    saveSettings({ mode: 'paused' });
+    run('DELETE FROM alerts');
+    run('DELETE FROM allowance_samples');
+    fresh();
+    forgetProbe(ids.model);
+    updateAgent('task', { model: 'claude-opus-5-5', modelConnectionId: ids.model, billing: 'subscription' });
+  });
+
+  it('works on its own branch with the prompt verbatim, and pushes it with no ticket updates', async () => {
+    fake.env = new FakeEnv(pushed({ before: '', after: 'def5678', ahead: 2 }));
+    const id = await start();
+    const r = await settle(id);
+    expect(r).toMatchObject({ status: 'succeeded', ticket_id: null, repo_id: 1, agent: 'task', summary: 'Fixed the host count.', error: null });
+    const branch = `workshop/task-${id.slice(0, 8)}`;
+    const [prepare, agent, publish] = fake.env.started as StepSpec[];
+    expect(fake.env.started.map((s: StepSpec) => s.cmd[0])).toEqual(['prepare', 'run', 'publish']);
+    expect(prepare.env).toMatchObject({ BRANCH: branch, BASE_BRANCH: 'main' });
+    expect(prepare.labels).toMatchObject({ 'workshop.task': 'me/app', 'workshop.agent': 'task' });
+    expect(prepare.labels).not.toHaveProperty('workshop.ticket');
+    expect(agent.files!['.workshop/prompt.md']).toBe(PROMPT);
+    const system = agent.files!['.workshop/system.md'] as string;
+    expect(system).toContain('You are working on a task the owner gave you');
+    expect(system).toContain(`Workshop pushes \`${branch}\``);
+    expect(system).not.toContain('ticket');
+    expect(JSON.parse(agent.files!['.workshop/schema.json'] as string).properties).not.toHaveProperty('media');
+    expect(JSON.stringify(agent.env)).not.toMatch(/READ|WRITE|x-access-token/);
+    expect(agent.env.MODEL).toBe('claude-opus-5-5');
+    expect(publish.env).toMatchObject({ BRANCH: branch, SKIP_EMPTY: '1' });
+    expect(publish.env.PUSH_URL).toContain('WRITE');
+    expect(fake.tickets.setLabels).not.toHaveBeenCalled();
+    expect(fake.tickets.comment).not.toHaveBeenCalled();
+    expect(fake.vcs.openPullRequest).not.toHaveBeenCalled();
+    expect(fake.vcs.deleteBranch).not.toHaveBeenCalled();
+    expect(runView(id)).toMatchObject({
+      ticketId: null,
+      ticket: null,
+      ticketTitle: null,
+      ticketUrl: null,
+      repo: 'me/app',
+      environmentId: ids.env,
+      task: { prompt: PROMPT, title: 'Find out why the dashboard shows the wrong host.', branch, branchUrl: `https://github.com/me/app/tree/${branch}` },
+    });
+    expect(one('SELECT repo, agent, ticket FROM spend WHERE run_id = ?', id)).toEqual({ repo: 'me/app', agent: 'task', ticket: null });
+  });
+
+  it('has no branch link when the agent committed nothing', async () => {
+    fake.env = new FakeEnv(pushed({ ahead: 0 }));
+    const id = await start();
+    expect((await settle(id)).status).toBe('succeeded');
+    expect(runView(id)!.task!.branchUrl).toBeNull();
+    expect(fake.vcs.deleteBranch).not.toHaveBeenCalled();
+  });
+
+  it('deletes the empty branch an older agent image pushed', async () => {
+    fake.env = new FakeEnv(pushed({ before: '', after: 'abc1234', ahead: 0 }));
+    const id = await start();
+    expect((await settle(id)).status).toBe('succeeded');
+    expect(fake.vcs.deleteBranch).toHaveBeenCalledWith(expect.objectContaining({ fullName: 'me/app' }), `workshop/task-${id.slice(0, 8)}`);
+    expect(runView(id)!.task!.branchUrl).toBeNull();
+  });
+
+  it('picks the browser image only when asked', async () => {
+    fake.env = new FakeEnv(pushed({ ahead: 0 }));
+    expect((await settle(await start(true))).image).toBe(config.agentBrowserImage);
+    fake.env = new FakeEnv(pushed({ ahead: 0 }));
+    expect((await settle(await start(false))).image).toBe(config.agentImage);
+  });
+
+  it("pushes a failed agent's commits, then ends failed without touching any ticket", async () => {
+    fake.env = new FakeEnv({ prepare: ['ok'], run: [result({ outcome: 'failed', summary: 'The tests need a database.' })], publish: [line({ before: '', after: 'def5678', ahead: 1 })] });
+    const id = await start();
+    expect(await settle(id)).toMatchObject({ status: 'failed', error: 'The tests need a database.' });
+    expect(fake.env.spec('publish')).toBeDefined();
+    expect(runView(id)!.task!.branchUrl).not.toBeNull();
+    expect(fake.tickets.setLabels).not.toHaveBeenCalled();
+    expect(fake.tickets.comment).not.toHaveBeenCalled();
+    expect(all("SELECT id FROM alerts WHERE kind = 'ticket-failed'")).toHaveLength(0);
+    expect(getTicket(1)!.failures).toBe(0);
+  });
+
+  it('fails without touching any ticket when the agent errors', async () => {
+    fake.env = new FakeEnv({ prepare: ['ok'], run: ['not json'] });
+    const id = await start();
+    expect((await settle(id)).status).toBe('failed');
+    expect(fake.tickets.setLabels).not.toHaveBeenCalled();
+    expect(all("SELECT id FROM alerts WHERE kind = 'ticket-failed'")).toHaveLength(0);
+  });
+
+  it("adds a needs_info result's questions to the summary", async () => {
+    fake.env = new FakeEnv({ prepare: ['ok'], run: [result({ outcome: 'needs_info', summary: 'Two ways to fix it.', questions: ['Keep the old API?', 'Add a migration?'] })], publish: [line({ ahead: 0 })] });
+    const r = await settle(await start());
+    expect(r.status).toBe('succeeded');
+    expect(r.summary).toBe('Two ways to fix it.\n\nQuestions:\n\n- Keep the old API?\n- Add a migration?');
+  });
+
+  describe('starting', () => {
+    it('ignores the operation mode, and takes a host slot ticket runs then wait for', async () => {
+      saveSettings({ mode: 'paused' });
+      fake.env = new FakeEnv(pushed({ ahead: 0 }));
+      fake.env.wait = async () => new Promise(() => {}); // keeps the task running
+      const id = await start();
+      expect(getRun(id)).toMatchObject({ status: 'starting', prompt: PROMPT, browser: 0 });
+      expect(hostLoads().find((h) => h.id === ids.env)!.busy).toBe(1);
+      updateAgent('implement', { model: 'claude-sonnet-5-5', modelConnectionId: ids.model });
+      expect(buildQueue(getSettings(), Date.now(), { ignoreMode: true }).find((c) => c.ticket.id === 1)!.blockedBy).toBe('Every agent host is busy or offline');
+      await expect(start()).rejects.toThrow("Can't start a task yet: Every agent host is busy or offline.");
+      run("UPDATE runs SET status = 'cancelled' WHERE id = ?", id);
+    });
+
+    it('refuses without a model for the Task agent', async () => {
+      updateAgent('task', { model: null, modelConnectionId: null });
+      await expect(start()).rejects.toThrow("Can't start a task yet: Choose a model for Task on the Agents page.");
+      expect(all('SELECT id FROM runs')).toHaveLength(0);
+    });
+
+    it("refuses when the subscription is over its limits", async () => {
+      recordProbe(ids.model, { pct: 95, resetsAt: null }, { pct: 10, resetsAt: null });
+      await expect(start()).rejects.toThrow("Can't start a task yet: 5-hour allowance at 95%.");
+    });
+
+    it('refuses an unknown repository', async () => {
+      await expect(launchTask({ repoId: 99, prompt: PROMPT, browser: false })).rejects.toThrow('Repository not found.');
+    });
+
+    it('reads a stale allowance first, then starts', async () => {
+      run('DELETE FROM allowance_samples');
+      fake.env = new FakeEnv({ ...pushed({ ahead: 0 }), usage: [RATE, result({})] });
+      const id = await start();
+      expect(fake.env.started[0].cmd).toEqual(['usage-probe']);
+      expect((await settle(id)).status).toBe('succeeded');
+    });
+
+    it("refuses with the probe's reason when the allowance can't be read", async () => {
+      run('DELETE FROM allowance_samples');
+      fake.env = new FakeEnv({ usage: [line({ type: 'result', subtype: 'success', is_error: true, result: 'Invalid bearer token', usage: {} })] });
+      await expect(start()).rejects.toThrow("Can't start a task yet: Workshop couldn't read your Claude usage (Invalid bearer token).");
+      expect(all('SELECT id FROM runs')).toHaveLength(0);
+      forgetProbe(ids.model);
+    });
+  });
+
+  it('resumes after a usage limit while Workshop is paused', async () => {
+    saveSettings({ mode: 'paused' });
+    run(
+      `INSERT INTO runs (id, ticket_id, repo_id, prompt, agent, attempt, environment_id, model_connection_id, model, billing, status, step, volume, resets_at, pause_reason, started_at)
+       VALUES ('task-paused', NULL, 1, ?, 'task', 1, ?, ?, 'claude-opus-5-5', 'subscription', 'paused', 'run', 'v', ?, 'limit', 0)`,
+      PROMPT,
+      ids.env,
+      ids.model,
+      Date.now() - 1000,
+    );
+    fake.env = new FakeEnv(pushed({ ahead: 0 }));
+    resumePaused(getSettings(), Date.now());
+    expect((await settle('task-paused')).status).toBe('succeeded');
+    expect(fake.env.spec('run')!.env.RESUME).toBe('1');
   });
 });
