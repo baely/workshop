@@ -178,7 +178,7 @@ function taskLine(c: TaskContext): string {
       return [
         `Review the work on branch \`${c.branch}\` (compare with \`git diff origin/${c.base}...HEAD\`) against the ticket and the design at \`${c.docPath}\` if that file exists, and return your findings.`,
         reviewed ? 'Check that the review feedback above was addressed.' : '',
-        rework ? 'Workshop sent the ticket back once to fix the findings above. Check each one again and report it only if it still holds.' : '',
+        rework ? 'Workshop sent the ticket back to fix the findings above. Check each one again and report it only if it still holds, with repeat set to true. Also set repeat on a problem that an earlier send-back comment listed and that has come back. Report new problems as usual, without repeat.' : '',
       ].filter(Boolean).join(' ');
     case 'merge':
       if (c.rescue) {

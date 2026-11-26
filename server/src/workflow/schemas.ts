@@ -35,6 +35,8 @@ export interface Finding {
   fix: string;
   file?: string;
   line?: number;
+  /** A severe finding an earlier review this round sent the ticket back for, and it still holds. */
+  repeat?: boolean;
 }
 
 export interface ReviewResult extends WorkResult {
@@ -127,6 +129,7 @@ const REVIEW_SCHEMA = {
           fix: { type: 'string', description: 'A concrete fix.' },
           file: { type: 'string', description: 'The file, relative to the repository root, when it applies.' },
           line: { type: 'integer', minimum: 1, description: 'The line in file, when it applies.' },
+          repeat: { type: 'boolean', description: 'true only when an earlier code review sent the ticket back for this same problem (the findings listed above, or in Workshop\'s earlier send-back comments), and it still holds.' },
         },
         required: ['severity', 'cause', 'title', 'detail', 'evidence', 'fix'],
         additionalProperties: false,
@@ -151,7 +154,8 @@ function isFinding(v: unknown): v is Finding {
     CAUSES.includes(f.cause as Finding['cause']) &&
     [f.title, f.detail, f.evidence, f.fix].every(isText) &&
     (f.file === undefined || typeof f.file === 'string') &&
-    (f.line === undefined || (Number.isInteger(f.line) && (f.line as number) > 0))
+    (f.line === undefined || (Number.isInteger(f.line) && (f.line as number) > 0)) &&
+    (f.repeat === undefined || typeof f.repeat === 'boolean')
   );
 }
 

@@ -58,8 +58,8 @@ export interface PlanContext {
 
 const NEXT_TEXT = { implement: 'implementation', design: 'design', 'design-review': 'design review' } as const;
 
-/** How many times one review round may send a ticket back automatically. */
-export const MAX_REWORKS = 1;
+/** Backstop on automatic send-backs per review round, in case every review finds a new severe problem. */
+export const MAX_REWORKS = 3;
 /** At most this many findings go into a comment or pull request: GitHub rejects bodies over 65,536 characters. */
 export const MAX_FINDINGS_SHOWN = 30;
 /** Findings stop once the list reaches this many characters, well under GitHub's limit with the rest of the body. */
@@ -103,7 +103,7 @@ export function formatFindings(findings: Finding[]): string {
   return lines.join('\n');
 }
 
-export const EXHAUSTED_TEXT = '**The code review still found severe problems after one rework. Read them before approving.**';
+export const EXHAUSTED_TEXT = "**The code review still found severe problems after Workshop's rework. Read them before approving.**";
 
 /** The Code review section of a pull request. */
 export function reviewSection(r: ReviewResult, exhausted: boolean): string {
@@ -153,15 +153,17 @@ export function planTransition(ctx: PlanContext, result: AgentResult): Plan {
   }
 }
 
-/** Severe findings go back to design or implementation once per review round; everything else goes into the pull request. */
+/** Severe findings go back to design or implementation until a rework fails to fix one (or MAX_REWORKS); everything else goes into the pull request. */
 function planReview(ctx: PlanContext, r: ReviewResult): Plan {
   const findings = r.findings ?? [];
   const target = stageForRework(ctx.state.size, findings);
   // A send-back whose publish failed (say, GitHub errored after the rework was stored) left no new handoff: don't count it.
   const pending = ctx.rework?.handoffRunId !== undefined && ctx.rework.handoffRunId === ctx.handoffRunId;
   const count = (ctx.rework?.count ?? 0) - (pending ? 1 : 0);
-  if (target && count < MAX_REWORKS) {
-    const severe = findings.filter((f) => f.severity === 'severe');
+  const severe = findings.filter((f) => f.severity === 'severe');
+  // A new severe problem gets another rework; one the last rework didn't fix needs you.
+  const unfixed = count > 0 && severe.some((f) => f.repeat);
+  if (target && !unfixed && count < MAX_REWORKS) {
     const where = NEXT_TEXT[target];
     return {
       ...moveTo(ctx.labels, target),

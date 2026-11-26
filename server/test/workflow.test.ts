@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { addNeeds, applyEdits, branchFor, describeStep, labelDiff, imageFor, label, nextStep, parseLabels, stageAfterClassify, stateEdits } from '../src/workflow/labels.ts';
 import { parseResult, schemaFor, type Finding, type Rescue } from '../src/workflow/schemas.ts';
-import { MAX_FINDINGS_SHOWN, planTransition, reviewSection, stageForRework, type PlanContext } from '../src/workflow/transitions.ts';
+import { MAX_FINDINGS_SHOWN, MAX_REWORKS, planTransition, reviewSection, stageForRework, type PlanContext } from '../src/workflow/transitions.ts';
 import { capabilitiesOf, DEFAULT_PROMPTS, environmentText, protocolText, taskPrompt } from '../src/workflow/prompts.ts';
 import { stepPriority } from '../src/scheduler/gates.ts';
 
@@ -507,7 +507,7 @@ describe('code review', () => {
     expect(plan.publish).toBeUndefined();
     expect(plan.openPr).toBeUndefined();
     expect(plan.rework).toEqual({ count: 1, findings: [finding()] });
-    expect(plan.comment).toContain('Code review found 1 severe problem, so Workshop sends this ticket back to implementation (rework 1 of 1):');
+    expect(plan.comment).toContain('Code review found 1 severe problem, so Workshop sends this ticket back to implementation (rework 1 of 3):');
     expect(plan.comment).toContain('Crashes on empty input');
     expect(plan.comment).not.toContain('Nit');
     expect(plan.comment).toMatch(/Next: implementation\.$/);
@@ -517,11 +517,23 @@ describe('code review', () => {
     expect(design.comment).toContain('back to design');
   });
 
-  it('opens the PR flagged when severe findings remain after the rework', () => {
+  it('sends a new severe finding back again after a rework, up to MAX_REWORKS', () => {
+    // Ticket 230: the rework fixed the first finding, and the next review found a different one.
     const rework = { count: 1, findings: [finding()] };
-    const plan = planTransition(reviewCtx('s', { rework }), done([finding()]));
+    const plan = planTransition(reviewCtx('s', { rework }), done([finding({ title: 'Test crashes without data' })]));
+    expect(plan).toMatchObject({ add: [label.stage('implement')], rework: { count: 2, findings: [finding({ title: 'Test crashes without data' })] } });
+    expect(plan.comment).toContain('(rework 2 of 3)');
+    const capped = planTransition(reviewCtx('s', { rework: { ...rework, count: MAX_REWORKS } }), done([finding()]));
+    expect(capped).toMatchObject({ add: [label.stage('pr-review')], openPr: true, flagged: true });
+    // repeat means nothing on a round's first review.
+    expect(planTransition(reviewCtx(), done([finding({ repeat: true })])).add).toEqual([label.stage('implement')]);
+  });
+
+  it('opens the PR flagged when a severe finding the rework was for still holds', () => {
+    const rework = { count: 1, findings: [finding()] };
+    const plan = planTransition(reviewCtx('s', { rework }), done([finding({ title: 'New one' }), finding({ repeat: true })]));
     expect(plan).toMatchObject({ add: [label.stage('pr-review')], openPr: true, rework: null, flagged: true });
-    expect(plan.reviewNotes).toContain('still found severe problems after one rework');
+    expect(plan.reviewNotes).toContain("still found severe problems after Workshop's rework");
     expect(plan.reviewNotes!.indexOf('still found')).toBeLessThan(plan.reviewNotes!.indexOf('Crashes'));
     expect(plan.add).not.toContain(label.needsInfo);
     expect(plan.comment).toBeUndefined();
@@ -529,7 +541,7 @@ describe('code review', () => {
 
   it('holds the PR with needs-info when it would merge without review', () => {
     const rework = { count: 1, findings: [finding()] };
-    const plan = planTransition(reviewCtx('s', { rework, mergeWithoutReview: true }), done([finding()]));
+    const plan = planTransition(reviewCtx('s', { rework, mergeWithoutReview: true }), done([finding({ repeat: true })]));
     expect(plan.add).toEqual([label.stage('pr-review'), label.needsInfo]);
     expect(plan.comment).toMatch(/^@damiante .*won't merge this pull request without you/);
     // Nothing severe: no hold.

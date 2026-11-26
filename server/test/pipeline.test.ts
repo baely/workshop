@@ -1191,7 +1191,7 @@ describe('code review', () => {
   const steps = (env: FakeEnv) => env.started.map((s) => s.cmd[0]);
   const promptOf = (env: FakeEnv) => env.spec('run')!.files!['.workshop/prompt.md'] as string;
 
-  it('sends severe problems back to implementation once with the findings, then opens the pull request flagged', async () => {
+  it('sends severe problems back to implementation with the findings, then opens the pull request flagged when one still holds', async () => {
     await implement('Added a dark theme.');
     const first = await review([severe(), finding()]);
     expect(first.r.status).toBe('succeeded');
@@ -1209,7 +1209,7 @@ describe('code review', () => {
     expect(promptOf(fix)).toContain('describe the whole change');
     expect(JSON.parse(getTicket(1)!.handoff!)).toMatchObject({ before: 'aaa', after: 'ccc', result: { summary: 'Added a dark theme, with a guarded toggle.' } });
 
-    const second = await review([severe()]);
+    const second = await review([severe({ repeat: true })]);
     expect(promptOf(second.env)).toContain('## Severe findings from the previous code review');
     const body = fake.vcs.openPullRequest.mock.calls[0][1].body as string;
     expect(body).toMatch(/^### Code review\n\n\*\*The code review still found severe problems/);
@@ -1276,10 +1276,10 @@ describe('code review', () => {
     expect(fake.vcs.openPullRequest).not.toHaveBeenCalled();
     expect(ticketLabels()).toContain(label.stage('implement'));
     expect(JSON.parse(getTicket(1)!.rework!)).toMatchObject({ count: 1 });
-    expect(fake.tickets.comment).toHaveBeenCalledWith(expect.anything(), 3, expect.stringContaining('rework 1 of 1'));
+    expect(fake.tickets.comment).toHaveBeenCalledWith(expect.anything(), 3, expect.stringContaining('rework 1 of 3'));
 
     await implement('Added a dark theme, with a guarded toggle.', { before: 'bbb', after: 'ccc', ahead: 2 });
-    await review([severe()]);
+    await review([severe({ repeat: true })]);
     expect(fake.vcs.openPullRequest.mock.calls[0][1].body).toMatch(/still found severe problems[\s\S]*with a guarded toggle\./);
     expect(ticketLabels()).toContain(label.stage('pr-review'));
   });
@@ -1301,10 +1301,10 @@ describe('code review', () => {
     expect(fake.vcs.openPullRequest).not.toHaveBeenCalled();
     expect(ticketLabels()).toContain(label.stage('implement'));
     expect(JSON.parse(getTicket(1)!.rework!)).toMatchObject({ count: 1 });
-    expect(fake.tickets.comment).toHaveBeenCalledWith(expect.anything(), 3, expect.stringContaining('rework 1 of 1'));
+    expect(fake.tickets.comment).toHaveBeenCalledWith(expect.anything(), 3, expect.stringContaining('rework 1 of 3'));
 
     await implement('Added a dark theme, with a guarded toggle.', { before: 'bbb', after: 'ccc', ahead: 2 });
-    await review([severe()]);
+    await review([severe({ repeat: true })]);
     expect(fake.vcs.openPullRequest.mock.calls[0][1].body).toMatch(/still found severe problems[\s\S]*with a guarded toggle\./);
     expect(ticketLabels()).toContain(label.stage('pr-review'));
   });
@@ -1316,13 +1316,13 @@ describe('code review', () => {
     fake.tickets.setLabels.mockImplementation(async (_repo: unknown, _n: number, add: string[]) => {
       if (add.includes(label.stage('pr-review'))) throw new Error('GitHub is down');
     });
-    expect((await review([severe()])).r.status).toBe('failed');
+    expect((await review([severe({ repeat: true })])).r.status).toBe('failed');
     expect(getTicket(1)!.pr_number).toBe(7);
     expect(JSON.parse(getTicket(1)!.rework!)).toMatchObject({ count: 1 });
     expect(getTicket(1)!.handoff).not.toBeNull();
     fake.tickets.setLabels.mockImplementation(async () => {});
 
-    await review([severe()]);
+    await review([severe({ repeat: true })]);
     expect(ticketLabels()).toContain(label.stage('pr-review'));
     expect(fake.vcs.commentOnPullRequest.mock.calls[0][2]).toMatch(/^Updated after review\.\n\n### Code review\n\n\*\*The code review still found[\s\S]*Tried again\./);
     expect(getTicket(1)!.rework).toBeNull();
@@ -1335,7 +1335,7 @@ describe('code review', () => {
       await implement('Added a dark theme.');
       await review([severe()]);
       await implement('Tried again.', { before: 'bbb', after: 'ccc', ahead: 2 });
-      await review([severe()]);
+      await review([severe({ repeat: true })]);
       expect(ticketLabels()).toEqual(expect.arrayContaining([label.stage('pr-review'), label.needsInfo]));
       expect(fake.tickets.comment).toHaveBeenLastCalledWith(expect.anything(), 3, expect.stringMatching(/^@me .*won't merge this pull request without you/));
 
