@@ -26,6 +26,7 @@ function RunLine({ run, now }: { run: RunView; now: number }) {
         {run.status === 'paused' && run.pauseReason === 'manual' && <span>waits for you to resume it</span>}
         {run.status === 'paused' && run.pauseReason === 'connection' && <span>moving to another Claude subscription</span>}
         {run.pauseRequested && <span>pauses after the current step</span>}
+        {run.publishRetryAt && <span>publishes again after {clock(run.publishRetryAt)}</span>}
       </div>
     </div>
   );
@@ -179,6 +180,18 @@ export function Dashboard() {
                     </span>
                     <span className="tag">{q.next}</span>
                   </div>
+      {data.publishWaiting.length > 0 && (
+        <Panel title="Waiting to publish">
+          <p className="small muted">These agents have finished and their work is saved. Workshop publishes it to GitHub when GitHub answers again; they don't use an agent slot.</p>
+          <ul className="list">
+            {data.publishWaiting.map((r) => (
+              <li key={r.id}>
+                <RunLine run={r} now={now} />
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
                   {q.push && <span className="small muted">Pushed by you</span>}
                   {q.prioritised && !q.push && <span className="small muted">Prioritised by you</span>}
                   {q.blockedBy && <span className="small muted">Waiting: {q.blockedBy}</span>}

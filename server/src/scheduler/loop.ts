@@ -12,10 +12,10 @@ import { appendLog, deleteLog, getRun, RUNNING_SQL, type RunRow } from '../runs.
 import { check } from '../http/util.ts';
 import { sweepExpiredTokens } from '../http/tokens.ts';
 import { getSettings } from '../settings.ts';
-import { activeRunId, blockersOf, getRepo, getTicket, isAllowedAuthor, labelsOf, setPrioritised, setPush, ticketInScope, type RepoRow, type TicketRow } from '../tickets.ts';
+import { activeRunId, blockersOf, vcsFor, getRepo, getTicket, isAllowedAuthor, labelsOf, setPrioritised, setPush, ticketInScope, type RepoRow, type TicketRow } from '../tickets.ts';
 import { nextStep, parseLabels } from '../workflow/labels.ts';
 import { AGENT_INFO } from '../workflow/prompts.ts';
-import { allowanceBlock, apiCapBlock, pickSubscription, clockTopics, dependencyBlock, inScope, isUnclassified, localTime, modeBlock, pickHost, priorityBlock, pushEnded, stepPriority, withinHours, type ClockState, type HostLoad } from './gates.ts';
+import { allowanceBlock, apiCapBlock, formatTime, pickSubscription, clockTopics, dependencyBlock, inScope, isUnclassified, localTime, modeBlock, pickHost, priorityBlock, pushEnded, stepPriority, withinHours, type ClockState, type HostLoad } from './gates.ts';
 import { advanceMerge } from './merge.ts';
 import { abortRun, cancelPause, drive, isDriving, launch, onRunSettled, resume, switchConnection } from './runner.ts';
 import { syncRepo } from './sync.ts';
@@ -346,6 +346,15 @@ const ORDER_SQL: Record<TicketOrder, string> = {
   'created-desc': 'COALESCE(t.created_at, t.updated_at) DESC',
 };
 
+/** The repo's code host, or null when its connection is gone (the queue says so elsewhere). */
+const vcsConn = (r: RepoRow) => {
+  try {
+    return vcsFor(r);
+  } catch {
+    return null;
+  }
+};
+
 /** Every ticket Workshop could work on next, in order, each with the reason it's waiting (if any). */
 export function buildQueue(s: Settings = getSettings(), now = Date.now(), opts: { ignoreMode?: boolean } = {}): Candidate[] {
   const hosts = hostLoads();
@@ -359,6 +368,12 @@ export function buildQueue(s: Settings = getSettings(), now = Date.now(), opts: 
     .filter((t) => isAllowedAuthor(t.author) && ticketInScope(t, repos.get(t.repo_id)!) && isUnclassified(labelsOf(t), true, blockersOf(t)))
     .map((t) => ({ repo: repos.get(t.repo_id)!.full_name, priority: repos.get(t.repo_id)!.priority }));
   const pool = subscriptions(s, now);
+  // A run started while GitHub is rate-limited can't publish: it would only wait, and spend more of the quota.
+  const githubBlock = new Map<number, string | null>();
+  for (const r of repos.values()) {
+    const until = vcsConn(r)?.rateLimitedUntil?.() ?? null;
+    githubBlock.set(r.id, until ? `GitHub's rate limit is used up until ${formatTime(until, s.timezone, now)}` : null);
+  }
   const out: (Candidate & { priority: number; repoPriority: number })[] = [];
   for (const t of rows) {
     const repo = repos.get(t.repo_id)!;
@@ -372,7 +387,7 @@ export function buildQueue(s: Settings = getSettings(), now = Date.now(), opts: 
     const cls = getAgent(agent);
     const conn = getConnection(cls.model_connection_id);
     const name = AGENT_INFO[agent].label;
-    let blockedBy = dependencyBlock(blockersOf(t)) ?? (t.push ? null : modeReason ?? (t.prioritised ? null : priorityReason));
+    let blockedBy = dependencyBlock(blockersOf(t)) ?? githubBlock.get(repo.id) ?? (t.push ? null : modeReason ?? (t.prioritised ? null : priorityReason));
     if (!blockedBy && (!cls.model || !conn)) blockedBy = `Choose a model for ${name} on the Agents page`;
     if (!blockedBy && !modelsOf(conn!).billing().includes(cls.billing)) {
       blockedBy = `${conn!.name} has no ${cls.billing === 'api' ? 'API key' : 'subscription token'} for ${name}`;

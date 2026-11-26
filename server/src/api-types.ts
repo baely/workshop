@@ -211,6 +211,8 @@ export interface RunView {
   timeoutMin: number | null;
   /** When the current step's container started: the time limit counts from here. */
   stepStartedAt: number | null;
+  /** The agent finished, but GitHub failed while publishing: when Workshop tries again. Such a run holds no agent slot. */
+  publishRetryAt: number | null;
 }
 
 export type PauseReason = 'limit' | 'threshold' | 'manual' | 'connection';
@@ -306,7 +308,10 @@ export interface Overview {
   mode: Mode;
   withinHours: boolean;
   allowance: AllowanceView[];
+  /** Runs using an agent slot, plus paused ones. */
   running: RunView[];
+  /** Finished agents whose work Workshop publishes once GitHub answers again. */
+  publishWaiting: RunView[];
   needsYou: TicketView[];
   /** Needs-you items you dismissed. */
   dismissed: TicketView[];

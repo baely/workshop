@@ -115,6 +115,8 @@ export interface MergeRules {
 /** Version-control host (GitHub first). */
 export interface VcsHost {
   listRepos(): Promise<RepoRef[]>;
+  /** When the host's API rate limit, last reported as hit, resets; null when it isn't limited now. */
+  rateLimitedUntil?(): number | null;
   createBranch(repo: RepoRef, branch: string, ticket: { number: number; nodeId?: string }): Promise<void>;
   gitAccess(repo: RepoRef, write: boolean): Promise<GitAccess>;
   fileUrl(repo: RepoRef, branch: string, path: string): string;

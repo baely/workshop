@@ -1384,6 +1384,23 @@ describe('publish retries', () => {
     run('DELETE FROM alerts');
   });
 
+  it('at a GitHub rate limit, publishes again just after it resets and holds new launches until then', async () => {
+    const resets = Date.now() + 40 * 60_000;
+    fake.vcs.rateLimitedUntil = () => resets;
+    try {
+      failOnce(fake.tickets.setLabels, Object.assign(new Error('API rate limit exceeded'), { status: 403, response: { headers: { 'x-ratelimit-remaining': '0' } } }), toCodeReview);
+      fake.env = work();
+      const r = await deferred(go());
+      expect(r.status).toBe('publishing');
+      expect(r.publish_retry_at).toBe(resets + 30_000);
+      expect(r.error).toContain("after GitHub's rate limit resets at");
+      expect(r.result).not.toBeNull(); // the agent's work is kept for the retry
+      expect(buildQueue().every((c) => /GitHub's rate limit/.test(c.blockedBy ?? '') || /Depends/.test(c.blockedBy ?? ''))).toBe(true);
+    } finally {
+      delete fake.vcs.rateLimitedUntil;
+    }
+  });
+
   it('publishes again after GitHub fails, without running the agent again or counting a failure', async () => {
     failOnce(fake.tickets.setLabels, gatewayError(), toCodeReview);
     const env = work();

@@ -125,10 +125,20 @@ export class GitHubApp implements VcsHost, TicketSource {
   private installationOf = new Map<string, number>();
   private identity?: { name: string; email: string };
   private cfg: GitHubConfig;
+  private limitedUntil = 0;
 
   constructor(cfg: GitHubConfig, secret: GitHubSecret) {
     this.cfg = cfg;
-    this.app = new App({ appId: cfg.appId, privateKey: secret.privateKey, Octokit: Octokit.defaults({ throttle: { onRateLimit: shortWait, onSecondaryRateLimit: shortWait } }) });
+    // shortcut: one reset time for the whole App, though GitHub limits each installation; fine with one installation.
+    const limited = (retryAfter: number, options: { request: { retryCount: number } }) => {
+      this.limitedUntil = Math.max(this.limitedUntil, Date.now() + retryAfter * 1000);
+      return shortWait(retryAfter, options);
+    };
+    this.app = new App({ appId: cfg.appId, privateKey: secret.privateKey, Octokit: Octokit.defaults({ throttle: { onRateLimit: limited, onSecondaryRateLimit: limited } }) });
+  }
+
+  rateLimitedUntil() {
+    return this.limitedUntil > Date.now() ? this.limitedUntil : null;
   }
 
   selfLogin() {

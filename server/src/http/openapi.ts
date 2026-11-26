@@ -96,6 +96,7 @@ const schemas: Record<string, Schema> = {
     maxTurns: nullable(int),
     timeoutMin: nullable(int),
     stepStartedAt: nullable(int),
+    publishRetryAt: nullable(int),
   }),
   TicketView: object({
     id: int,
@@ -155,6 +156,7 @@ const schemas: Record<string, Schema> = {
     withinHours: bool,
     allowance: array(ref('AllowanceView')),
     running: array(ref('RunView')),
+    publishWaiting: array(ref('RunView')),
     needsYou: array(ref('TicketView')),
     dismissed: array(ref('TicketView')),
     queue: array(ref('QueueItem')),

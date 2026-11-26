@@ -99,6 +99,7 @@ function toView(r: ViewRow): RunView {
     maxTurns: r.max_turns,
     timeoutMin: r.timeout_min,
     stepStartedAt: r.step_started_at,
+    publishRetryAt: r.publish_retry_at,
   };
 }
 

@@ -42,7 +42,7 @@ import { AGENT_INFO, capabilitiesOf, ENVIRONMENT_LABEL, environmentText, protoco
 import { parseResult, schemaFor, type AgentResult, type Handoff, type Rescue, type WorkResult } from '../workflow/schemas.ts';
 import { planTransition, type Plan } from '../workflow/transitions.ts';
 import { check } from '../http/util.ts';
-import { ALLOWANCE_MAX_AGE_MS, isTransient, joinRefs, PUBLISH_GIVE_UP_MS, publishRetryMinutes, thresholdBlock } from './gates.ts';
+import { ALLOWANCE_MAX_AGE_MS, formatTime, isRateLimited, isTransient, joinRefs, PUBLISH_GIVE_UP_MS, publishRetryMinutes, thresholdBlock } from './gates.ts';
 import { advanceMerge } from './merge.ts';
 
 // A run moves starting (prepare) → running (claude) → publishing (push + ticket updates) → succeeded.
@@ -815,8 +815,12 @@ async function deferPublish(r: RunRow, err: unknown) {
     return;
   }
   const minutes = publishRetryMinutes(r.publish_retries);
-  const text = `GitHub didn't answer (${detail}). Workshop tries publishing again in ${minutes} minute${minutes === 1 ? '' : 's'}.`;
-  setRun(r.id, { error: text, step: null, container_id: null, publish_retries: r.publish_retries + 1, publish_retry_at: now + minutes * 60_000, publish_failing_since: since });
+  // At a rate limit, try again just after GitHub says it resets, not on the usual schedule.
+  const resets = isRateLimited(err) ? vcsFor(getRepo(getTicket(r.ticket_id)!.repo_id)!).rateLimitedUntil?.() : null;
+  const at = resets ? resets + 30_000 : now + minutes * 60_000;
+  const when = resets ? `after GitHub's rate limit resets at ${formatTime(at, getSettings().timezone, now)}` : `in ${minutes} minute${minutes === 1 ? '' : 's'}`;
+  const text = `GitHub didn't answer (${detail}). Workshop tries publishing again ${when}.`;
+  setRun(r.id, { error: text, step: null, container_id: null, publish_retries: r.publish_retries + 1, publish_retry_at: at, publish_failing_since: since });
   appendLog(r.id, { step: 'workshop', stream: 'stdout', text });
 }
 

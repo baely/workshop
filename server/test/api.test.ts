@@ -722,6 +722,17 @@ describe("changing a ticket's status", () => {
     expect(fakeTickets.setLabels).not.toHaveBeenCalled();
   });
 
+  it('lists runs waiting to publish apart from the running ones', async () => {
+    run("INSERT INTO runs (id, ticket_id, agent, attempt, model, billing, status, publish_retry_at, started_at) VALUES ('r-wait', ?, 'design', 1, 'm', 'subscription', 'publishing', 123, 0)", id);
+    try {
+      const res = await request(app).get('/api/overview').set('cookie', cookie);
+      expect(res.body.running.map((r: { id: string }) => r.id)).not.toContain('r-wait');
+      expect(res.body.publishWaiting).toMatchObject([{ id: 'r-wait', publishRetryAt: 123 }]);
+    } finally {
+      run("DELETE FROM runs WHERE id = 'r-wait'");
+    }
+  });
+
   it('refuses while an agent works on the ticket', async () => {
     fakeTickets.setLabels = vi.fn();
     run("INSERT INTO runs (id, ticket_id, agent, attempt, model, billing, status, started_at) VALUES ('r-state', ?, 'design', 1, 'm', 'subscription', 'running', 0)", id);
