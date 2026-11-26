@@ -198,7 +198,7 @@ export function RunView() {
   const task = run.task;
   const stop = () => {
     const question = task
-      ? 'Stop this task? Its work is discarded unless it was already pushed.'
+      ? 'Stop this agent? Its work is discarded unless it was already pushed. The task stays open.'
       : 'Stop this run? The ticket gets the workshop/failed label, so it won’t start again until you remove it.';
     if (!confirm(question)) return;
     act('stop');
@@ -212,8 +212,10 @@ export function RunView() {
         <div className="stack" style={{ gap: 4 }}>
           {task ? (
             <>
-              <h1>Task in {run.repo}</h1>
-              <span className="muted mono small">{task.branch}</span>
+              <h1>
+                {AGENT_LABEL[run.agent]} on Task {task.id}
+              </h1>
+              <Link to={`/tasks/${task.id}`}>{task.title}</Link>
             </>
           ) : (
             <>
@@ -227,10 +229,10 @@ export function RunView() {
           )}
         </div>
         <div className="row">
-          {task?.branchUrl && (
-            <a className="button" href={task.branchUrl} target="_blank" rel="noreferrer">
-              View branch
-            </a>
+          {task && (
+            <Link className="button" to={`/tasks/${task.id}`}>
+              Task
+            </Link>
           )}
           {!task && (
             <Link className="button" to={`/tickets/${run.ticketId}`}>
@@ -310,9 +312,9 @@ export function RunView() {
           </div>
         </Panel>
       )}
-      {task && (
-        <Panel title="Prompt">
-          <p className="prompt panel-body">{task.prompt}</p>
+      {run.prompt && (
+        <Panel title="Instructions">
+          <p className="prompt panel-body">{run.prompt}</p>
         </Panel>
       )}
       <ErrorNote error={actionError} />

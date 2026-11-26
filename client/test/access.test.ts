@@ -7,7 +7,7 @@ describe('claudeBrief', () => {
       origin: 'https://workshop.example.com',
       token: 'wks_secret',
       expiresAt: Date.parse('2026-11-25T18:00:00Z'),
-      run: { id: 'run-abc', ticketId: 42, ticket: 'me/app#7', repo: 'me/app', agent: 'implement', status: 'failed' },
+      run: { id: 'run-abc', ticketId: 42, ticket: 'me/app#7', repo: 'me/app', task: null, agent: 'implement', status: 'failed' },
     });
     expect(text).toContain('https://workshop.example.com');
     expect(text).toContain('export WORKSHOP=https://workshop.example.com');
@@ -20,15 +20,16 @@ describe('claudeBrief', () => {
     expect(text).toContain('on me/app#7, status failed');
   });
 
-  it('describes a task by its repository, with no ticket to fetch', () => {
+  it('describes a task run by its task, and fetches the task instead of a ticket', () => {
     const text = claudeBrief({
       origin: 'https://workshop.example.com',
       token: 'wks_secret',
       expiresAt: Date.parse('2026-11-25T18:00:00Z'),
-      run: { id: 'run-task', ticketId: null, ticket: null, repo: 'me/app', agent: 'task', status: 'failed' },
+      run: { id: 'run-task', ticketId: null, ticket: null, repo: 'me/app', task: { id: 3, title: 'Slow sync' }, agent: 'implement', status: 'failed' },
     });
-    expect(text).toContain('Look at run run-task (Task in me/app, status failed).');
+    expect(text).toContain('Look at run run-task (Implementation on Task 3 in me/app, status failed).');
     expect(text).toContain('$WORKSHOP/api/runs/run-task/export');
+    expect(text).toContain('$WORKSHOP/api/tasks/3');
     expect(text).not.toContain('/api/tickets/');
     expect(text).not.toContain('null');
   });

@@ -12,15 +12,7 @@ function RunLine({ run, now }: { run: RunView; now: number }) {
     <div className="stack" style={{ gap: 4 }}>
       <div className="spread">
         <span>
-          {run.ticketId === null ? (
-            <>
-              <Link to={`/runs/${run.id}`}>Task</Link> in <Link to="/tasks">{run.repo}</Link>
-            </>
-          ) : (
-            <>
-              <Link to={`/runs/${run.id}`}>{AGENT_LABEL[run.agent]}</Link> on <Link to={subject.to}>{subject.text}</Link>
-            </>
-          )}
+          <Link to={`/runs/${run.id}`}>{AGENT_LABEL[run.agent]}</Link> on <Link to={subject.to}>{run.task ? `Task ${run.task.id}` : subject.text}</Link>
         </span>
         <Status tone={status.tone}>{status.label}</Status>
       </div>
@@ -215,7 +207,7 @@ export function Dashboard() {
                     .filter((r) => r.environmentId === h.id && r.status !== 'paused')
                     .map((r) => (
                       <Link key={r.id} className="small" to={`/runs/${r.id}`}>
-                        {AGENT_LABEL[r.agent]}: {r.ticketId === null ? runTitle(r) : r.ticket}
+                        {AGENT_LABEL[r.agent]}: {r.task ? `Task ${r.task.id}` : r.ticket}
                       </Link>
                     ))}
                 </li>

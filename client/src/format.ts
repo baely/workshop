@@ -1,4 +1,4 @@
-import type { AgentName, RunStatus, RunView, Stage } from '../../server/src/api-types.ts';
+import type { AgentName, RunStatus, RunView, Stage, TaskSummary } from '../../server/src/api-types.ts';
 
 export const AGENT_LABEL: Record<AgentName, string> = {
   classifier: 'Classifier',
@@ -10,13 +10,28 @@ export const AGENT_LABEL: Record<AgentName, string> = {
   task: 'Task',
 };
 
-/** What a run works on: its ticket, linking to the ticket's lifecycle, or "Task in owner/repo", linking to the Tasks page. */
-export function runSubject(run: Pick<RunView, 'ticketId' | 'ticket' | 'repo'>): { text: string; to: string } {
-  return run.ticketId === null ? { text: `Task in ${run.repo}`, to: '/tasks' } : { text: run.ticket ?? run.repo, to: `/tickets/${run.ticketId}` };
+/** What a run works on: its ticket, linking to the ticket's lifecycle, or "Task 3 in owner/repo", linking to the task. */
+export function runSubject(run: Pick<RunView, 'ticketId' | 'ticket' | 'repo' | 'task'>): { text: string; to: string } {
+  if (run.task) return { text: `Task ${run.task.id} in ${run.repo}`, to: `/tasks/${run.task.id}` };
+  return { text: run.ticket ?? run.repo, to: `/tickets/${run.ticketId}` };
 }
 
 /** The second line under a run's subject: the ticket's title, or the task's. */
 export const runTitle = (run: Pick<RunView, 'ticketTitle' | 'task'>) => run.task?.title ?? run.ticketTitle ?? '';
+
+const ACTIVE: RunStatus[] = ['starting', 'running', 'publishing', 'paused'];
+export const isActive = (run: Pick<RunView, 'status'>) => ACTIVE.includes(run.status);
+
+/** Where a task stands: closed, its agent's status while one works, or what the latest agent reported. */
+export function taskState(t: Pick<TaskSummary, 'closed' | 'latest'>): { label: string; tone: Tone } {
+  if (t.closed) return { label: 'Closed', tone: 'idle' };
+  const run = t.latest;
+  if (!run) return { label: 'No agents yet', tone: 'idle' };
+  if (isActive(run) || !run.result) return runStatus(run);
+  if (run.result.outcome === 'needs_info') return { label: 'Needs your answer', tone: 'attention' };
+  if (run.result.outcome === 'failed') return { label: 'Failed', tone: 'error' };
+  return { label: 'Done', tone: 'ok' };
+}
 
 export const STAGE_TEXT: Record<Stage, string> = {
   design: 'Design',
