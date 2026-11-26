@@ -82,6 +82,9 @@ export async function tick() {
   try {
     await checkHosts();
     reattachRuns();
+    // What's already known to be ready starts first, so a slow or rate-limited GitHub sync can't leave hosts idle.
+    const early = buildQueue(getSettings(), Date.now()).find((c) => !c.blockedBy);
+    if (early) startCandidate(early);
     await syncRepos();
     settleManual();
     const s = getSettings();

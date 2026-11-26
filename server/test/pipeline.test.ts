@@ -28,7 +28,7 @@ const { sweepMedia } = await import('../src/media.ts');
 const { connectionPaused, drive, isDriving, launch, PAUSE_GRACE_MS, requestPause, resume } = await import('../src/scheduler/runner.ts');
 const { buildQueue, forgetProbe, hostLoads, launchNow, mergeApproved, probeAllowance, reattachRuns, refreshNow, resumeNow, resumePaused, settleManual } = await import('../src/scheduler/loop.ts');
 const { setPrioritised, setPush, getTicket, ticketView, getRepo } = await import('../src/tickets.ts');
-const { syncRepo } = await import('../src/scheduler/sync.ts');
+const { syncRepo, HELD_CHECKS_PER_SYNC } = await import('../src/scheduler/sync.ts');
 const { getSettings, saveSettings } = await import('../src/settings.ts');
 const { label } = await import('../src/workflow/labels.ts');
 
@@ -2168,6 +2168,71 @@ describe('sync', () => {
       } finally {
         run('DELETE FROM tickets WHERE number = 8');
       }
+    });
+
+    describe('with many held tickets', () => {
+      const add = (n: number, blockedBy: string, state = 'open') =>
+        run("INSERT INTO tickets (repo_id, number, title, body, url, author, state, labels, blocked_by, updated_at) VALUES (1, ?, 'T', '', 'u', 'me', ?, '[]', ?, '2026-10-13T00:00:00Z')", n, state, blockedBy);
+      const holdOf = (n: number) => one<{ blocked_by: string }>('SELECT blocked_by FROM tickets WHERE number = ?', n)?.blocked_by;
+      const checked = () => (fake.tickets.blockers as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1] as number);
+      beforeEach(() => {
+        fake.tickets.listChanged = async () => [];
+        for (let n = 1000; n < 1000 + HELD_CHECKS_PER_SYNC + 50; n++) add(n, '["#900"]');
+      });
+      afterEach(() => run('DELETE FROM tickets WHERE number >= 900'));
+
+      it('reads a limited round, least recently read first, and rotates', async () => {
+        fake.tickets.blockers = vi.fn(async () => [open(900)]);
+        await syncRepo(repo());
+        expect(checked()).toHaveLength(HELD_CHECKS_PER_SYNC);
+        expect(checked()).toContain(1000);
+        fake.tickets.blockers = vi.fn(async () => [open(900)]);
+        await syncRepo(repo());
+        // The 50 never read come first.
+        expect(checked().slice(0, 50)).toEqual(Array.from({ length: 50 }, (_, i) => 1000 + HELD_CHECKS_PER_SYNC + i));
+      });
+
+      it('reads first the tickets whose blocker closed, and those you prioritised', async () => {
+        add(950, '[]', 'closed');
+        add(2000, '["#950"]');
+        run(`UPDATE tickets SET blocked_by = '["#901"]', prioritised = 1 WHERE number = 1149`);
+        run('UPDATE tickets SET blockers_checked_at = 1'); // everything else was read longer ago than these two
+        run('UPDATE tickets SET blockers_checked_at = 2 WHERE number IN (1149, 2000)');
+        fake.tickets.blockers = vi.fn(async (_r: unknown, n: number) => (n === 2000 || n === 1149 ? [] : [open(900)]));
+        await syncRepo(repo());
+        expect(checked().slice(0, 2).sort()).toEqual([1149, 2000]);
+        expect(holdOf(2000)).toBe('[]');
+        expect(holdOf(1149)).toBe('[]');
+      });
+
+      it('stops the round at a rate limit, keeping what it read', async () => {
+        const limited = Object.assign(new Error('API rate limit exceeded'), { status: 403, response: { headers: { 'x-ratelimit-remaining': '0' } } });
+        let calls = 0;
+        fake.tickets.blockers = vi.fn(async () => {
+          if (++calls > 3) throw limited;
+          return [];
+        });
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        run("UPDATE repos SET synced_at = '2026-10-13T00:00:00Z' WHERE id = 1");
+        await syncRepo(repo());
+        expect(checked()).toHaveLength(4);
+        expect(holdOf(1000)).toBe('[]');
+        expect(holdOf(1010)).toBe('["#900"]');
+        expect(repo().synced_at).not.toBe('2026-10-13T00:00:00Z'); // only held tickets were missed: they come round again anyway
+      });
+
+      it('lists newly blocked tickets again when a rate limit stopped their reads', async () => {
+        const limited = Object.assign(new Error('API rate limit exceeded'), { status: 429 });
+        fake.tickets.listChanged = async () => [remote({ labels: [], openBlockers: 1 })];
+        fake.tickets.blockers = vi.fn(async () => {
+          throw limited;
+        });
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        run("UPDATE repos SET synced_at = '2026-10-13T00:00:00Z' WHERE id = 1");
+        await syncRepo(repo());
+        expect(checked()).toEqual([3]);
+        expect(repo().synced_at).toBe('2026-10-13T00:00:00Z');
+      });
     });
   });
 });

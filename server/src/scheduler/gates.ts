@@ -183,11 +183,19 @@ export const publishRetryMinutes = (retries: number) => PUBLISH_RETRY_MIN[Math.m
 export const PUBLISH_GIVE_UP_MS = 6 * 3600_000;
 const NETWORK_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND', 'EPIPE', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT']);
 
-/** A GitHub 5xx or 429, or a network error: worth retrying later rather than failing the run. */
+/** GitHub refused for its rate limit: a 429, or a 403 that says the quota is used up or to retry later. */
+export function isRateLimited(err: unknown): boolean {
+  const e = err as { status?: unknown; response?: { headers?: Record<string, unknown> } } | null;
+  if (e?.status === 429) return true;
+  const h = e?.response?.headers ?? {};
+  return e?.status === 403 && (String(h['x-ratelimit-remaining']) === '0' || h['retry-after'] !== undefined);
+}
+
+/** A GitHub 5xx or rate limit, or a network error: worth retrying later rather than failing the run. */
 export function isTransient(err: unknown): boolean {
   if (typeof err !== 'object' || err === null) return false;
   const e = err as { status?: unknown; code?: unknown; name?: unknown; cause?: unknown };
-  if (typeof e.status === 'number') return e.status >= 500 || e.status === 429;
+  if (typeof e.status === 'number') return e.status >= 500 || isRateLimited(err);
   const cause = typeof e.cause === 'object' && e.cause !== null ? (e.cause as { code?: unknown }).code : undefined;
   return NETWORK_CODES.has(String(e.code)) || NETWORK_CODES.has(String(cause)) || e.name === 'TimeoutError';
 }

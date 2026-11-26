@@ -43,6 +43,7 @@ export interface TicketRow {
   pr_status: string | null;
   failures: number;
   blocked_by: string;
+  blockers_checked_at: number | null;
   push: Push | null;
   push_stage: string | null;
   ui: number;

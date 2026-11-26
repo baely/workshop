@@ -262,6 +262,7 @@ export const MIGRATIONS = [
   ALTER TABLE runs ADD COLUMN publish_retry_at INTEGER;      -- when the tick may publish again
   ALTER TABLE runs ADD COLUMN publish_failing_since INTEGER; -- first temporary failure, for the 6-hour give-up
   `,
+  `ALTER TABLE tickets ADD COLUMN blockers_checked_at INTEGER; -- last read of a held ticket's blockers, for the rotation`,
 ];
 
 export let db: DatabaseSync;

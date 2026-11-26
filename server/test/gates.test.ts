@@ -233,6 +233,11 @@ describe('publish retries', () => {
     }
   });
 
+  it('treats a GitHub rate limit as temporary', () => {
+    expect(isTransient({ status: 403, response: { headers: { 'x-ratelimit-remaining': '0' } } })).toBe(true);
+    expect(isTransient({ status: 403, response: { headers: { 'retry-after': '60' } } })).toBe(true);
+  });
+
   it('treats everything else as a real failure', () => {
     for (const err of [{ status: 422 }, { status: 403 }, new Error('The implementation agent finished without committing any changes.'), 'boom', null]) {
       expect(isTransient(err)).toBe(false);

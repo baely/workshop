@@ -114,6 +114,12 @@ const MERGEABILITY: Record<string, Mergeability> = {
   blocked: 'blocked',
 };
 
+/**
+ * Waits out a short rate-limit pause once; a longer one fails at once (as a rate-limit error), because waiting
+ * would hold up the scheduler tick, and with it every launch, for up to an hour.
+ */
+const shortWait = (retryAfter: number, options: { request: { retryCount: number } }) => options.request.retryCount === 0 && retryAfter <= 60;
+
 export class GitHubApp implements VcsHost, TicketSource {
   private app: InstanceType<typeof App>;
   private installationOf = new Map<string, number>();
@@ -122,7 +128,7 @@ export class GitHubApp implements VcsHost, TicketSource {
 
   constructor(cfg: GitHubConfig, secret: GitHubSecret) {
     this.cfg = cfg;
-    this.app = new App({ appId: cfg.appId, privateKey: secret.privateKey });
+    this.app = new App({ appId: cfg.appId, privateKey: secret.privateKey, Octokit: Octokit.defaults({ throttle: { onRateLimit: shortWait, onSecondaryRateLimit: shortWait } }) });
   }
 
   selfLogin() {
