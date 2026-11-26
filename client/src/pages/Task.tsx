@@ -4,7 +4,7 @@ import type { AgentName, Finding, RunView, TaskView } from '../../../server/src/
 import { api, useApi, useNow } from '../api.ts';
 import { Markdown } from '../components/Markdown.tsx';
 import { ErrorNote, Panel, Status } from '../components/ui.tsx';
-import { AGENT_LABEL, clock, duration, isActive, runStatus, taskState } from '../format.ts';
+import { AGENT_LABEL, clock, duration, isActive, taskState } from '../format.ts';
 import { AgentSelect, BrowserBox } from './Tasks.tsx';
 
 const SEVERITY: Record<Finding['severity'], string> = { severe: 'Severe', moderate: 'Moderate', minor: 'Minor' };
@@ -32,7 +32,8 @@ function Findings({ findings }: { findings: Finding[] }) {
 }
 
 function RunBlock({ run, n, now }: { run: RunView; n: number; now: number }) {
-  const status = runStatus(run);
+  // The agent's reported outcome, once it has one: "Needs your answer" says more than the run's "Done".
+  const status = taskState({ closed: false, latest: run });
   const r = run.result;
   return (
     <li className="stack" style={{ gap: 6 }}>
