@@ -12,9 +12,10 @@ import { untar } from '../providers/docker/tar.ts';
 import { environmentOf, getConnection, modelsOf } from '../providers/index.ts';
 import type { ContainerState, Environment, StepSpec } from '../providers/types.ts';
 import { collectAgentMedia, deleteMedia, fetchTicketImages, listMedia, mediaFiles, warn, type IssueImage } from '../media.ts';
-import { ACTIVE_STATUSES, activity, appendLog, getRun, linesFrom, readLog, taskBranch, type RunRow } from '../runs.ts';
+import { ACTIVE_STATUSES, activity, appendLog, getRun, linesFrom, readLog, taskResultOf, type RunRow } from '../runs.ts';
 import { getSettings } from '../settings.ts';
 import { recordSpend } from '../spend.ts';
+import { getTask, taskDocPath, touchTask, type TaskRow } from '../tasks.ts';
 import {
   branchOf,
   docPathOf,
@@ -38,8 +39,8 @@ import {
 } from '../tickets.ts';
 import { imageFor, label, moveTo, parseLabels, REPO_IMAGE_DIR, repoImageTag } from '../workflow/labels.ts';
 import { MAX_TICKET, replaceImageLinks, screenshotsLine } from '../workflow/media.ts';
-import { AGENT_INFO, capabilitiesOf, ENVIRONMENT_LABEL, environmentText, protocolText, publishes, taskPrompt, taskProtocolText } from '../workflow/prompts.ts';
-import { parseResult, schemaFor, type AgentResult, type Handoff, type Rescue, type WorkResult } from '../workflow/schemas.ts';
+import { AGENT_INFO, capabilitiesOf, ENVIRONMENT_LABEL, environmentText, protocolText, publishes, taskPrompt, taskProtocolText, taskRunPrompt } from '../workflow/prompts.ts';
+import { parseResult, schemaFor, taskSchemaFor, type AgentResult, type Handoff, type Rescue, type WorkResult } from '../workflow/schemas.ts';
 import { planTransition, type Plan } from '../workflow/transitions.ts';
 import { check } from '../http/util.ts';
 import { ALLOWANCE_MAX_AGE_MS, isTransient, joinRefs, PUBLISH_GIVE_UP_MS, publishRetryMinutes, thresholdBlock } from './gates.ts';
@@ -75,10 +76,12 @@ function setRun(id: string, fields: Partial<Record<keyof RunRow, string | number
 
 interface Ctx {
   run: RunRow;
-  /** Null for a task. */
+  /** Null for a task run. */
   ticket: TicketRow | null;
+  /** Null for a ticket run. */
+  task: TaskRow | null;
   repo: RepoRow;
-  /** What alerts call the run: owner/repo#12, or "A task in owner/repo". */
+  /** What alerts call the run: owner/repo#12, or "Task 3 in owner/repo". */
   what: string;
   env: Environment;
   host: { name: string; cfg: DockerConfig };
@@ -89,27 +92,31 @@ interface Ctx {
 function context(r: RunRow): Ctx {
   const ticket = r.ticket_id === null ? null : getTicket(r.ticket_id);
   if (ticket === undefined) throw new Error('The ticket no longer exists in Workshop.');
+  const task = r.task_id === null ? null : getTask(r.task_id);
+  if (task === undefined) throw new Error('The task no longer exists in Workshop.');
   const repo = getRepo(r.repo_id);
   if (!repo) throw new Error('The repository no longer exists in Workshop.');
   const conn = getConnection(r.environment_id);
   if (!conn) throw new Error('The agent host for this run was removed.');
   const images = { repo: repo.image || null, base: config.agentImage, browser: config.agentBrowserImage };
   const ui = ticket ? Boolean(ticket.ui) : Boolean(r.browser);
-  const subject: Record<string, string> = ticket ? { 'workshop.ticket': `${repo.full_name}#${ticket.number}` } : { 'workshop.task': repo.full_name };
+  const subject: Record<string, string> = ticket ? { 'workshop.ticket': `${repo.full_name}#${ticket.number}` } : { 'workshop.task': `${repo.full_name} task ${task!.id}` };
   return {
     run: r,
     ticket,
+    task,
     repo,
-    what: ticket ? `${repo.full_name}#${ticket.number}` : `A task in ${repo.full_name}`,
+    what: ticket ? `${repo.full_name}#${ticket.number}` : `Task ${task!.id} in ${repo.full_name}`,
     env: environmentOf(conn),
     host: { name: conn.name, cfg: conn.config as unknown as DockerConfig },
-    image: r.image ?? imageFor(r.agent, parseLabels(ticket ? labelsOf(ticket) : []), images, ui),
+    // On a task the browser flag alone picks the browser image, whatever the agent.
+    image: r.image ?? (ticket ? imageFor(r.agent, parseLabels(labelsOf(ticket)), images, ui) : imageFor('task', parseLabels([]), images, ui)),
     labels: { 'workshop.instance': config.instance, 'workshop.run': r.id, ...subject, 'workshop.agent': r.agent },
   };
 }
 
-/** The branch the run works on: the ticket's, or the task's own. */
-const branchFor = (ctx: Ctx) => (ctx.ticket ? branchOf(ctx.ticket) : taskBranch(ctx.run.id));
+/** The branch the run works on: the ticket's, or the one its task's runs share. */
+const branchFor = (ctx: Ctx) => (ctx.ticket ? branchOf(ctx.ticket) : ctx.task!.branch);
 
 const builds = new Map<string, Promise<void>>();
 
@@ -242,13 +249,25 @@ async function runSpec(ctx: Ctx, agent: AgentRow) {
     MAX_BUDGET_USD: r.billing === 'api' ? String(getSettings().apiRunCapUsd) : '',
     RESUME: r.resumes > 0 ? '1' : '',
   };
-  const files: Record<string, string | Buffer> = { '.workshop/': '', '.workshop/schema.json': JSON.stringify(schemaFor(r.agent)) };
-  if (r.resumes === 0 && !ctx.ticket) {
-    // A task: the owner's prompt, verbatim, with no ticket, comments or media.
+  const files: Record<string, string | Buffer> = { '.workshop/': '', '.workshop/schema.json': JSON.stringify(ctx.task ? taskSchemaFor(r.agent) : schemaFor(r.agent)) };
+  if (r.resumes === 0 && ctx.task) {
+    // A task run: the task, its earlier runs' instructions and outcomes, and the owner's instructions. No ticket or media.
+    const task = ctx.task;
+    const branch = branchFor(ctx);
     const imageLabels: Record<string, string> = await ctx.env.imageLabels(ctx.image).catch(() => ({}));
     const environment = environmentText(capabilitiesOf(imageLabels), imageLabels[ENVIRONMENT_LABEL], true);
-    files['.workshop/system.md'] = `${promptFor(agent)}\n\n${taskProtocolText({ branch: branchFor(ctx), base: ctx.repo.default_branch })}\n\n${environment}`;
-    files['.workshop/prompt.md'] = r.prompt ?? '';
+    files['.workshop/system.md'] = `${promptFor(agent)}\n\n${taskProtocolText({ branch, base: ctx.repo.default_branch, publishes: publishes(r.agent) })}\n\n${environment}`;
+    const earlier = all<RunRow>('SELECT * FROM runs WHERE task_id = ? AND id != ? AND ended_at IS NOT NULL ORDER BY started_at, rowid', task.id, r.id);
+    files['.workshop/prompt.md'] = taskRunPrompt({
+      agent: r.agent,
+      repo: ctx.repo.full_name,
+      base: ctx.repo.default_branch,
+      branch,
+      docPath: taskDocPath(task),
+      task: { id: task.id, title: task.title, body: task.body },
+      history: earlier.map((h) => ({ agent: h.agent, prompt: h.prompt, status: h.status, error: h.error, result: taskResultOf(h), endedAt: h.ended_at })),
+      prompt: r.prompt,
+    });
   } else if (r.resumes === 0 && ctx.ticket) {
     const t = ctx.ticket;
     const repo = repoRef(ctx.repo);
@@ -325,9 +344,8 @@ function describeError(res: NonNullable<ClaudeRun['result']>, maxTurns: number):
   }
 }
 
-const summarize = (r: AgentResult, task = false) => {
-  // A task has no ticket to post questions on, so they go into the summary the run page shows.
-  if (!('decision' in r)) return task && r.questions?.length ? `${r.summary}\n\nQuestions:\n\n${r.questions.map((q) => `- ${q}`).join('\n')}` : r.summary;
+const summarize = (r: AgentResult) => {
+  if (!('decision' in r)) return r.summary;
   const what =
     r.decision === 'accept'
       ? `Sized ${r.size?.toUpperCase()}`
@@ -514,7 +532,7 @@ async function runAgent(ctx: Ctx): Promise<boolean> {
   if (switched && (!res || res.isError)) {
     // The session didn't get going on the subscription it moved to: start the stage again instead of failing.
     const to = getConnection(r.model_connection_id)?.name ?? 'the new subscription';
-    await abortRun(r.id, ctx.ticket ? `Couldn't continue the session on ${to}, so Workshop starts this stage again.` : `Couldn't continue the session on ${to}, so Workshop stopped this task. Start it again from the Tasks page.`);
+    await abortRun(r.id, ctx.ticket ? `Couldn't continue the session on ${to}, so Workshop starts this stage again.` : `Couldn't continue the session on ${to}, so Workshop stopped this agent. Start another agent from the task's page.`);
     return false;
   }
   if (claude.apiError === 'authentication_failed') {
@@ -531,7 +549,7 @@ async function runAgent(ctx: Ctx): Promise<boolean> {
   const parsed = parseResult(r.agent, res.structured);
   if (typeof parsed === 'string') throw new Error(`The agent's result was invalid: ${parsed}`);
   await copyBackMedia(ctx, parsed);
-  setRun(r.id, { status: 'publishing', step: null, container_id: null, result: JSON.stringify(parsed), summary: summarize(parsed, !ctx.ticket), pause_requested_at: null });
+  setRun(r.id, { status: 'publishing', step: null, container_id: null, result: JSON.stringify(parsed), summary: summarize(parsed), pause_requested_at: null });
   return true;
 }
 
@@ -759,8 +777,8 @@ async function publishRun(ctx: Ctx) {
 }
 
 /**
- * A task's publish: pushes its branch if the agent committed anything, with no pull request and no ticket
- * updates. The agent's outcome decides the status: `failed` pushes too, then ends the run failed.
+ * A task run's publish: pushes the task's branch if it has commits, with no pull request and no ticket updates
+ * (the Code reviewer pushes nothing). The agent's outcome decides the status: `failed` pushes too, then ends the run failed.
  */
 async function publishTask(ctx: Ctx) {
   const r = ctx.run;
@@ -768,7 +786,7 @@ async function publishTask(ctx: Ctx) {
   const result = JSON.parse(r.result!) as WorkResult;
   const saved = r.publish_state ? (JSON.parse(r.publish_state) as { pushed?: Pushed }) : {};
   let pushed: Pushed = saved.pushed ?? {};
-  if (!saved.pushed) {
+  if (!saved.pushed && publishes(r.agent)) {
     const container = await runContainer(
       ctx,
       'publish',
@@ -791,10 +809,12 @@ async function publishTask(ctx: Ctx) {
         .deleteBranch(repoRef(ctx.repo), branch)
         .catch((err) => warn(r.id, `Workshop couldn't delete ${branch}, which has no new commits: ${(err as Error).message}`));
     }
+    if (pushed.ahead) run('UPDATE tasks SET pushed = 1 WHERE id = ?', ctx.task!.id);
     setRun(r.id, { publish_state: JSON.stringify({ pushed }) });
   }
   const failed = result.outcome === 'failed';
   setRun(r.id, { status: failed ? 'failed' : 'succeeded', step: null, container_id: null, ended_at: Date.now(), error: failed ? result.summary : null, publish_retry_at: null });
+  touchTask(r.task_id);
   if (r.volume) await ctx.env.removeVolume(r.volume).then(() => setRun(r.id, { volume: null }), () => {});
 }
 
@@ -867,7 +887,7 @@ async function deferPublish(r: RunRow, err: unknown) {
     raiseAlert(
       'error',
       'publish-failed',
-      `${t ? `${repo.full_name}#${t.number}` : `A task in ${repo.full_name}`}: Workshop couldn't publish the ${AGENT_INFO[r.agent].label} agent's work because GitHub kept failing for 6 hours. Last error: ${detail}`,
+      `${t ? `${repo.full_name}#${t.number}` : `Task ${r.task_id} in ${repo.full_name}`}: Workshop couldn't publish the ${AGENT_INFO[r.agent].label} agent's work because GitHub kept failing for 6 hours. Last error: ${detail}`,
       `run:${r.id}`,
     );
     await fail(r.id, `GitHub kept failing for 6 hours, so Workshop stopped trying to publish. Last error: ${detail}`);
@@ -880,10 +900,12 @@ async function deferPublish(r: RunRow, err: unknown) {
 }
 
 export function launch(p: {
-  /** Null for a task, which needs `prompt`. */
+  /** Exactly one of ticketId and taskId is set. */
   ticketId: number | null;
+  taskId?: number | null;
   repoId: number;
-  prompt?: string;
+  /** A task run's instructions. */
+  prompt?: string | null;
   browser?: boolean;
   agent: AgentName;
   mode: 'normal' | 'delta';
@@ -896,10 +918,11 @@ export function launch(p: {
   const id = crypto.randomUUID();
   try {
     run(
-      `INSERT INTO runs (id, ticket_id, repo_id, prompt, browser, agent, mode, attempt, environment_id, model_connection_id, model, billing, status, volume, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?)`,
+      `INSERT INTO runs (id, ticket_id, task_id, repo_id, prompt, browser, agent, mode, attempt, environment_id, model_connection_id, model, billing, status, volume, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?)`,
       id,
       p.ticketId,
+      p.taskId ?? null,
       p.repoId,
       p.prompt ?? null,
       Number(p.browser ?? false),
@@ -914,11 +937,12 @@ export function launch(p: {
       Date.now(),
     );
   } catch (err) {
-    if (String(err).includes('UNIQUE')) return null; // another agent already has this ticket
+    if (String(err).includes('UNIQUE')) return null; // another agent already has this ticket or task
     throw err;
   }
   publish('runs');
   if (p.ticketId !== null) publish('tickets');
+  touchTask(p.taskId ?? null);
   void drive(id);
   return id;
 }
@@ -999,6 +1023,7 @@ export async function fail(runId: string, message: string) {
   if (!r || !ACTIVE_STATUSES.includes(r.status)) return;
   setRun(runId, { status: 'failed', error: message, step: null, container_id: null, ended_at: Date.now() });
   activity.delete(runId);
+  touchTask(r.task_id);
   const t = r.ticket_id === null ? undefined : getTicket(r.ticket_id);
   if (!t) return;
   const failures = t.failures + 1;
@@ -1026,6 +1051,7 @@ export async function stopRun(runId: string, reason: string, hold: boolean) {
   if (!r || !ACTIVE_STATUSES.includes(r.status)) return;
   setRun(runId, { status: 'cancelled', error: reason, ended_at: Date.now() });
   activity.delete(runId);
+  touchTask(r.task_id);
   const conn = getConnection(r.environment_id);
   if (conn && r.container_id) await environmentOf(conn).kill(r.container_id).catch(() => {});
   const t = r.ticket_id === null ? undefined : getTicket(r.ticket_id);

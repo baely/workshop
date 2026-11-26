@@ -596,69 +596,134 @@ describe('OpenAPI', () => {
 
 describe('tasks', () => {
   let repo = 0;
+  let task = 0;
+  let closedTask = 0;
   const post = (body: object) => request(app).post('/api/tasks').set('cookie', cookie).send(body);
+  const follow = (id: number, body: object) => request(app).post(`/api/tasks/${id}/runs`).set('cookie', cookie).send(body);
+  const close = (id: number, body: object) => request(app).put(`/api/tasks/${id}/closed`).set('cookie', cookie).send(body);
 
   beforeAll(() => {
     const conn = Number(run("INSERT INTO connections (kind, provider, name, config, secret, status, created_at, updated_at) VALUES ('vcs', 'github', 'GH tasks', '{}', '', 'ok', 0, 0)").lastInsertRowid);
     repo = Number(run("INSERT INTO repos (vcs_connection_id, full_name, default_branch, url, enabled) VALUES (?, 'me/tasks', 'main', 'https://github.com/me/tasks', 0)", conn).lastInsertRowid);
-    run(
-      `INSERT INTO runs (id, ticket_id, repo_id, prompt, agent, attempt, model, billing, status, publish_state, started_at)
-       VALUES ('task-1', NULL, ?, ?, 'task', 1, 'm', 'subscription', 'succeeded', ?, 5)`,
-      repo,
-      'Look into the slow sync\nIt takes minutes.',
-      JSON.stringify({ pushed: { before: '', after: 'abc', ahead: 1 } }),
+    task = Number(
+      run("INSERT INTO tasks (repo_id, title, body, branch, pushed, created_at, updated_at) VALUES (?, 'Look into the slow sync', 'It takes minutes.', 'workshop/task-x-look', 1, 1, 10)", repo).lastInsertRowid,
     );
+    closedTask = Number(run("INSERT INTO tasks (repo_id, title, body, branch, closed_at, created_at, updated_at) VALUES (?, 'Old', 'Done.', 'workshop/task-y-old', 5, 1, 20)", repo).lastInsertRowid);
+    const ins = `INSERT INTO runs (id, task_id, repo_id, prompt, agent, attempt, model, billing, status, result, summary, started_at, ended_at) VALUES (?, ?, ?, ?, ?, 1, 'm', 'subscription', ?, ?, ?, ?, ?)`;
+    run(ins, 'task-run-2', task, repo, 'Fix it.', 'implement', 'running', null, null, 7, null);
+    run(ins, 'task-run-1', task, repo, null, 'task', 'succeeded', JSON.stringify({ outcome: 'needs_info', summary: 'It polls.', questions: ['Webhooks?'] }), 'It polls.', 5, 6);
   });
 
-  it('lists every repository and the tasks, with no ticket fields', async () => {
+  it('lists repositories, agents and tasks, open ones first', async () => {
     const res = await request(app).get('/api/tasks').set('cookie', cookie);
     expect(res.status).toBe(200);
     expect(res.body.repos).toContainEqual({ id: repo, fullName: 'me/tasks' });
-    expect(res.body.tasks).toHaveLength(1);
-    const task = res.body.tasks[0];
-    expect(task).toMatchObject({
-      id: 'task-1',
+    expect(res.body.agents).toEqual(['task', 'design', 'design-review', 'implement', 'code-review']);
+    expect(res.body.tasks.map((t: { id: number }) => t.id)).toEqual([task, closedTask]);
+    expect(res.body.tasks[0]).toMatchObject({
+      id: task,
+      repo: 'me/tasks',
+      title: 'Look into the slow sync',
+      closed: false,
+      branch: 'workshop/task-x-look',
+      branchUrl: 'https://github.com/me/tasks/tree/workshop/task-x-look',
+      runs: 2,
+      latest: { id: 'task-run-2', agent: 'implement', prompt: 'Fix it.', result: null },
+    });
+    expect(res.body.tasks[1]).toMatchObject({ closed: true, branchUrl: null, runs: 0, latest: null });
+    expect(Object.keys(res.body.tasks[0]).sort()).toEqual(Object.keys((OPENAPI.components.schemas.TaskSummary as { properties: object }).properties).sort());
+  });
+
+  it('shows one task with its runs oldest first, each with its outcome and no ticket fields', async () => {
+    const res = await request(app).get(`/api/tasks/${task}`).set('cookie', cookie);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: task, body: 'It takes minutes.', latest: { id: 'task-run-2' } });
+    expect(Object.keys(res.body).sort()).toEqual(Object.keys((OPENAPI.components.schemas.TaskView as { properties: object }).properties).sort());
+    expect(res.body.runs.map((r: { id: string }) => r.id)).toEqual(['task-run-1', 'task-run-2']);
+    expect(res.body.runs[0]).toMatchObject({
       ticketId: null,
       ticket: null,
       ticketTitle: null,
       ticketUrl: null,
       repo: 'me/tasks',
-      agent: 'task',
-      task: { prompt: 'Look into the slow sync\nIt takes minutes.', title: 'Look into the slow sync', branch: 'workshop/task-task-1', branchUrl: 'https://github.com/me/tasks/tree/workshop/task-task-1' },
+      task: { id: task, title: 'Look into the slow sync' },
+      prompt: null,
+      result: { outcome: 'needs_info', summary: 'It polls.', questions: ['Webhooks?'], tests: null, findings: [] },
     });
-    expect(Object.keys(task).sort()).toEqual(Object.keys((OPENAPI.components.schemas.RunView as { properties: object }).properties).sort());
-    // Tasks show among the runs too, but never on a ticket.
-    expect((await request(app).get('/api/runs').set('cookie', cookie)).body.map((r: { id: string }) => r.id)).toContain('task-1');
+    expect(Object.keys(res.body.runs[0]).sort()).toEqual(Object.keys((OPENAPI.components.schemas.RunView as { properties: object }).properties).sort());
+    // Task runs show among the runs too.
+    expect((await request(app).get('/api/runs').set('cookie', cookie)).body.map((r: { id: string }) => r.id)).toContain('task-run-1');
+    const missing = await request(app).get('/api/tasks/99999').set('cookie', cookie);
+    expect([missing.status, missing.body.error]).toEqual([404, 'Task not found.']);
   });
 
   it.each([
-    [{ prompt: 'Do it' }, 'Repository id must be a whole number'],
-    [{ repoId: 'x', prompt: 'Do it' }, 'Repository id must be a whole number'],
+    [{ body: 'Do it' }, 'Repository id must be a whole number'],
+    [{ repoId: 'x', body: 'Do it' }, 'Repository id must be a whole number'],
     [{ repoId: 1 }, 'Describe the task for the agent.'],
-    [{ repoId: 1, prompt: '   ' }, 'Describe the task for the agent.'],
-    [{ repoId: 1, prompt: 'x'.repeat(20_001) }, 'Describe the task in under 20,000 characters.'],
-    [{ repoId: 1, prompt: 7 }, 'Describe the task for the agent.'],
-    [{ repoId: 1, prompt: 'Do it', browser: 'yes' }, 'browser must be true or false.'],
-  ])('refuses %j', async (body, message) => {
+    [{ repoId: 1, body: '   ' }, 'Describe the task for the agent.'],
+    [{ repoId: 1, body: 'x'.repeat(20_001) }, 'Describe the task in under 20,000 characters.'],
+    [{ repoId: 1, body: 7 }, 'Describe the task for the agent.'],
+    [{ repoId: 1, body: 'Do it', title: 'x'.repeat(201) }, 'Keep the title under 200 characters.'],
+    [{ repoId: 1, body: 'Do it', title: 3 }, 'title must be text.'],
+    [{ repoId: 1, body: 'Do it', browser: 'yes' }, 'browser must be true or false.'],
+    [{ repoId: 1, body: 'Do it', agent: 'nobody' }, 'Choose one of these agents: Task, Design, Design adversary, Implementation, Code reviewer.'],
+    [{ repoId: 1, body: 'Do it', agent: 'classifier' }, 'Choose one of these agents'],
+  ])('refuses to create %j', async (body, message) => {
     const res = await post(body);
     expect(res.status).toBe(400);
     expect(res.body.error).toContain(message);
   });
 
-  it('refuses an unknown repository, and says why it cannot start one now', async () => {
-    const unknown = await post({ repoId: 99_999, prompt: 'Do it' });
-    expect(unknown.status).toBe(404);
-    expect(unknown.body.error).toBe('Repository not found.');
-    const closed = await post({ repoId: repo, prompt: 'Do it', browser: true });
-    expect(closed.status).toBe(409);
-    expect(closed.body.error).toBe("Can't start a task yet: Choose a model for Task on the Agents page.");
-    expect(one<{ n: number }>('SELECT COUNT(*) AS n FROM runs WHERE ticket_id IS NULL')!.n).toBe(1);
+  it('refuses an unknown repository, and says why it cannot start one now, storing nothing', async () => {
+    const before = one<{ n: number }>('SELECT COUNT(*) AS n FROM tasks')!.n;
+    const unknown = await post({ repoId: 99_999, body: 'Do it' });
+    expect([unknown.status, unknown.body.error]).toEqual([404, 'Repository not found.']);
+    const refused = await post({ repoId: repo, body: 'Do it', browser: true });
+    expect([refused.status, refused.body.error]).toEqual([409, "Can't start the agent yet: Choose a model for Task on the Agents page."]);
+    expect(one<{ n: number }>('SELECT COUNT(*) AS n FROM tasks')!.n).toBe(before);
   });
 
-  it('keeps a read-only token out', async () => {
+  it.each([
+    [{}, 'Choose one of these agents'],
+    [{ agent: 'merge' }, 'Choose one of these agents'],
+    [{ agent: 'task', prompt: 5 }, 'prompt must be text.'],
+    [{ agent: 'task', prompt: 'x'.repeat(20_001) }, 'Keep the instructions under 20,000 characters.'],
+    [{ agent: 'task', browser: 1 }, 'browser must be true or false.'],
+  ])('refuses to start a run with %j', async (body, message) => {
+    const res = await follow(task, body);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain(message);
+  });
+
+  it('refuses a run on an unknown, busy or closed task', async () => {
+    expect((await follow(99_999, { agent: 'task' })).status).toBe(404);
+    const busy = await follow(task, { agent: 'implement', prompt: 'Again' });
+    expect([busy.status, busy.body.error]).toEqual([409, 'An agent is already working on this task.']);
+    const closed = await follow(closedTask, { agent: 'task' });
+    expect([closed.status, closed.body.error]).toEqual([409, 'Reopen this task to start another agent.']);
+  });
+
+  it('closes and reopens a task, but not while an agent works on it', async () => {
+    expect((await close(closedTask, { closed: 'yes' })).status).toBe(400);
+    expect((await close(99_999, { closed: true })).status).toBe(404);
+    const busy = await close(task, { closed: true });
+    expect([busy.status, busy.body.error]).toEqual([409, 'Stop the running agent before closing this task.']);
+    const reopened = await close(closedTask, { closed: false });
+    expect(reopened.status).toBe(200);
+    expect(reopened.body).toMatchObject({ id: closedTask, closed: false });
+    const again = await close(closedTask, { closed: true });
+    expect(again.body.closed).toBe(true);
+  });
+
+  it('keeps a read-only token to reading', async () => {
     const token = (await request(app).post('/api/tokens').set('cookie', cookie).send({ name: 'tasks', scope: 'read' })).body.token;
-    expect((await request(app).post('/api/tasks').set('authorization', `Bearer ${token}`).send({ repoId: repo, prompt: 'Do it' })).status).toBe(403);
-    expect((await request(app).get('/api/tasks').set('authorization', `Bearer ${token}`)).status).toBe(200);
+    const auth = { authorization: `Bearer ${token}` };
+    expect((await request(app).post('/api/tasks').set(auth).send({ repoId: repo, body: 'Do it' })).status).toBe(403);
+    expect((await request(app).post(`/api/tasks/${task}/runs`).set(auth).send({ agent: 'task' })).status).toBe(403);
+    expect((await request(app).put(`/api/tasks/${task}/closed`).set(auth).send({ closed: true })).status).toBe(403);
+    expect((await request(app).get('/api/tasks').set(auth)).status).toBe(200);
+    expect((await request(app).get(`/api/tasks/${task}`).set(auth)).status).toBe(200);
   });
 });
 

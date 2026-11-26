@@ -1,18 +1,20 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { AgentName, Billing, LogEntry, PauseReason, RunStatus, RunView } from './api-types.ts';
+import type { AgentName, Billing, LogEntry, PauseReason, RunStatus, RunView, TaskResult } from './api-types.ts';
 import { config } from './config.ts';
 import { all, one } from './db.ts';
 
 export interface RunRow {
   id: string;
-  /** Null for a task: a run started with your own prompt, outside the ticket workflow. */
+  /** Null for a task run. */
   ticket_id: number | null;
+  /** Null for a ticket run. Exactly one of ticket_id and task_id is set. */
+  task_id: number | null;
   repo_id: number;
-  /** A task's prompt; null for ticket runs. */
+  /** A task run's instructions; null for ticket runs. */
   prompt: string | null;
-  /** A task that asked for the browser image (0 or 1). */
+  /** A task run that asked for the browser image (0 or 1). */
   browser: number;
   agent: AgentName;
   mode: 'normal' | 'delta';
@@ -63,42 +65,39 @@ export const RUNNING_SQL = "status IN ('starting', 'running', 'publishing')";
 
 export const getRun = (id: string) => one<RunRow>('SELECT * FROM runs WHERE id = ?', id);
 
-const VIEW_SQL = `
-  SELECT runs.*, (SELECT COUNT(*) FROM media m WHERE m.run_id = runs.id) AS media_count, t.number, t.title, t.url AS ticket_url, r.full_name, r.url AS repo_url, c.name AS env_name
+export const VIEW_SQL = `
+  SELECT runs.*, (SELECT COUNT(*) FROM media m WHERE m.run_id = runs.id) AS media_count, t.number, t.title, t.url AS ticket_url, k.title AS task_title, r.full_name, c.name AS env_name
   FROM runs
   LEFT JOIN tickets t ON t.id = runs.ticket_id
+  LEFT JOIN tasks k ON k.id = runs.task_id
   JOIN repos r ON r.id = runs.repo_id
   LEFT JOIN connections c ON c.id = runs.environment_id`;
 
-type ViewRow = RunRow & { media_count: number; number: number | null; title: string | null; ticket_url: string | null; full_name: string; repo_url: string; env_name: string | null };
+export type ViewRow = RunRow & {
+  media_count: number;
+  number: number | null;
+  title: string | null;
+  ticket_url: string | null;
+  task_title: string | null;
+  full_name: string;
+  env_name: string | null;
+};
 
-/** The branch a task works on. */
-export const taskBranch = (runId: string) => `workshop/task-${runId.slice(0, 8)}`;
-
-const TITLE_MAX = 80;
-
-/** A task's title: the prompt's first non-empty line, shortened to 80 characters. */
-export function taskTitle(prompt: string): string {
-  const line = prompt.split('\n').map((l) => l.trim()).find(Boolean) ?? '';
-  return line.length > TITLE_MAX ? `${line.slice(0, TITLE_MAX - 1).trimEnd()}…` : line;
-}
-
-function taskInfo(r: ViewRow): RunView['task'] {
-  if (r.prompt === null) return null;
-  const branch = taskBranch(r.id);
-  let ahead = 0;
+/** A task run's stored result, with the optional lists filled in. Null for ticket runs and runs without one. */
+export function taskResultOf(r: Pick<RunRow, 'task_id' | 'result'>): TaskResult | null {
+  if (r.task_id === null || !r.result) return null;
   try {
-    ahead = Number((JSON.parse(r.publish_state ?? 'null') as { pushed?: { ahead?: number } } | null)?.pushed?.ahead ?? 0);
+    const v = JSON.parse(r.result) as Partial<TaskResult> & { tests?: string };
+    return { outcome: v.outcome ?? 'done', summary: v.summary ?? '', questions: v.questions ?? [], tests: v.tests ?? null, findings: v.findings ?? [] };
   } catch {
-    // no push report
+    return null;
   }
-  return { prompt: r.prompt, title: taskTitle(r.prompt), branch, branchUrl: ahead > 0 ? `${r.repo_url}/tree/${branch}` : null };
 }
 
 /** Latest activity of running agents; in memory only, as it changes every few seconds. */
 export const activity = new Map<string, string>();
 
-function toView(r: ViewRow): RunView {
+export function toView(r: ViewRow): RunView {
   return {
     id: r.id,
     ticketId: r.ticket_id,
@@ -107,7 +106,9 @@ function toView(r: ViewRow): RunView {
     ticketUrl: r.ticket_id === null ? null : r.ticket_url,
     repo: r.full_name,
     environmentId: r.environment_id,
-    task: taskInfo(r),
+    task: r.task_id === null ? null : { id: r.task_id, title: r.task_title ?? '' },
+    prompt: r.task_id === null ? null : r.prompt,
+    result: taskResultOf(r),
     agent: r.agent,
     mode: r.mode,
     attempt: r.attempt,

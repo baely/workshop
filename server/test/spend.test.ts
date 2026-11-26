@@ -38,7 +38,8 @@ describe('backfillSpend', () => {
 
   it("adds a task's missing row with its repository and no ticket", () => {
     const repo = one<{ id: number }>('SELECT id FROM repos')!.id;
-    run("INSERT INTO runs (id, ticket_id, repo_id, prompt, agent, attempt, model, billing, status, input_tokens, started_at) VALUES ('task', NULL, ?, 'Do it', 'task', 1, 'm', 'api', 'succeeded', 3, 5)", repo);
+    const task = run("INSERT INTO tasks (repo_id, title, body, branch, created_at, updated_at) VALUES (?, 'Do it', 'Do it', 'workshop/task-1-do-it', 0, 0)", repo).lastInsertRowid;
+    run("INSERT INTO runs (id, task_id, repo_id, agent, attempt, model, billing, status, input_tokens, started_at) VALUES ('task', ?, ?, 'task', 1, 'm', 'api', 'succeeded', 3, 5)", task, repo);
     expect(backfillSpend('main')).toEqual({ filled: 0, added: 1 });
     expect(spendOf('task')).toEqual({ repo: 'me/app', agent: 'task', ticket: null });
   });

@@ -263,11 +263,24 @@ export const MIGRATIONS = [
   ALTER TABLE runs ADD COLUMN publish_failing_since INTEGER; -- first temporary failure, for the 6-hour give-up
   `,
   `
-  -- Tasks (#102): a run without a ticket, started with your own prompt on a repository. SQLite can't drop
-  -- NOT NULL in place, so runs is rebuilt; later migrations start from this definition.
+  -- Tasks (#102): virtual tickets outside the label workflow, with agents you start on them by hand.
+  -- A run belongs to a ticket or a task. SQLite can't drop NOT NULL in place, so runs is rebuilt;
+  -- later migrations start from this definition.
+  CREATE TABLE tasks (
+    id INTEGER PRIMARY KEY,
+    repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    pushed INTEGER NOT NULL DEFAULT 0, -- a run pushed the branch with commits ahead of the base
+    closed_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
   CREATE TABLE runs_new (
     id TEXT PRIMARY KEY,
-    ticket_id INTEGER REFERENCES tickets(id) ON DELETE CASCADE, -- null for a task
+    ticket_id INTEGER REFERENCES tickets(id) ON DELETE CASCADE, -- null for a task run
+    task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE, -- null for a ticket run
     agent TEXT NOT NULL,
     mode TEXT NOT NULL DEFAULT 'normal',
     attempt INTEGER NOT NULL,
@@ -303,9 +316,9 @@ export const MIGRATIONS = [
     publish_retry_at INTEGER,
     publish_failing_since INTEGER,
     repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
-    prompt TEXT, -- a task's prompt, as you wrote it
-    browser INTEGER NOT NULL DEFAULT 0, -- a task with the browser image
-    CHECK ((ticket_id IS NULL) = (prompt IS NOT NULL))
+    prompt TEXT, -- a task run's instructions, as you wrote them
+    browser INTEGER NOT NULL DEFAULT 0, -- a task run with the browser image
+    CHECK ((ticket_id IS NULL) = (task_id IS NOT NULL))
   );
   -- An inner join: a run whose ticket row is gone is already invisible, and would have no repository.
   INSERT INTO runs_new (id, ticket_id, agent, mode, attempt, environment_id, model_connection_id, model, billing, status, step, container_id, volume, log_since, resumes, exit_code, result, summary, error, input_tokens, output_tokens, cost_usd, resets_at, started_at, ended_at, image, pause_reason, pause_requested_at, switched_from, max_turns, timeout_min, step_started_at, publish_state, publish_retries, publish_retry_at, publish_failing_since, repo_id)
@@ -313,6 +326,8 @@ export const MIGRATIONS = [
   DROP TABLE runs;
   ALTER TABLE runs_new RENAME TO runs;
   CREATE UNIQUE INDEX runs_one_active_per_ticket ON runs(ticket_id)
+    WHERE status IN ('starting', 'running', 'publishing', 'paused');
+  CREATE UNIQUE INDEX runs_one_active_per_task ON runs(task_id)
     WHERE status IN ('starting', 'running', 'publishing', 'paused');
   -- Existing installs: the Task agent starts with Implementation's model and billing.
   INSERT OR IGNORE INTO agent_classes (name, model, model_connection_id, effort, billing, max_turns, timeout_min)

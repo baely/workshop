@@ -1,6 +1,6 @@
 // Types shared with the client (imported type-only). Keep this file free of runtime imports.
 
-export type Topic = 'runs' | 'tickets' | 'alerts' | 'connections' | 'settings' | 'allowance' | 'repos' | 'agents' | 'tokens' | 'media';
+export type Topic = 'runs' | 'tickets' | 'alerts' | 'connections' | 'settings' | 'allowance' | 'repos' | 'agents' | 'tokens' | 'media' | 'tasks';
 
 export type Mode = 'paused' | 'scheduled' | 'always';
 
@@ -177,7 +177,7 @@ export type RunStatus = 'starting' | 'running' | 'publishing' | 'paused' | 'succ
 
 export interface RunView {
   id: string;
-  /** The ticket fields are null for a task (a run started with your own prompt, outside the ticket workflow). */
+  /** The ticket fields are null for a task run (an agent you started on a task, outside the ticket workflow). */
   ticketId: number | null;
   /** owner/repo#12 */
   ticket: string | null;
@@ -187,7 +187,12 @@ export interface RunView {
   repo: string;
   /** The agent host's connection id. */
   environmentId: number | null;
-  task: TaskInfo | null;
+  /** The task a task run belongs to; null for ticket runs. */
+  task: TaskRef | null;
+  /** A task run's instructions, as you wrote them; null for ticket runs and task runs without any. */
+  prompt: string | null;
+  /** A task run's reported outcome, once the agent returned one; null for ticket runs. */
+  result: TaskResult | null;
   agent: AgentName;
   mode: 'normal' | 'delta';
   attempt: number;
@@ -220,15 +225,59 @@ export interface RunView {
   stepStartedAt: number | null;
 }
 
-/** What a task run was asked to do. */
-export interface TaskInfo {
-  prompt: string;
-  /** The prompt's first line, shortened. */
+export interface TaskRef {
+  id: number;
   title: string;
-  /** The branch the task works on, workshop/task-<first 8 characters of the run id>. */
+}
+
+/** One problem the Code reviewer found. */
+export interface Finding {
+  severity: 'severe' | 'moderate' | 'minor';
+  cause: 'design' | 'implementation';
+  title: string;
+  detail: string;
+  /** How the reviewer checked it. */
+  evidence: string;
+  fix: string;
+  file?: string;
+  line?: number;
+}
+
+/** What an agent on a task reported when it finished. */
+export interface TaskResult {
+  outcome: 'done' | 'needs_info' | 'failed';
+  /** The agent's report, in Markdown. When the task asked a question, it holds the answer. */
+  summary: string;
+  /** Questions for you (needs_info); answer them when you start the next agent. */
+  questions: string[];
+  tests: string | null;
+  /** The Code reviewer's findings; empty for other agents. */
+  findings: Finding[];
+}
+
+export interface TaskSummary {
+  id: number;
+  /** owner/repo */
+  repo: string;
+  title: string;
+  closed: boolean;
+  /** The branch every agent on the task shares, workshop/task-<id>-<title>. */
   branch: string;
   /** Set once Workshop pushed the branch with commits on it. */
   branchUrl: string | null;
+  createdAt: number;
+  updatedAt: number;
+  /** How many agents have run on the task. */
+  runs: number;
+  /** The newest run, if any. */
+  latest: RunView | null;
+}
+
+export interface TaskView extends Omit<TaskSummary, 'runs'> {
+  /** The description, as you wrote it. */
+  body: string;
+  /** Every run on the task, oldest first. */
+  runs: RunView[];
 }
 
 export interface TaskRepo {
@@ -239,8 +288,10 @@ export interface TaskRepo {
 export interface TasksView {
   /** Every repository Workshop can see, enabled ones first. */
   repos: TaskRepo[];
-  /** Tasks, newest first. */
-  tasks: RunView[];
+  /** The agents you can start on a task. */
+  agents: AgentName[];
+  /** Open tasks first, then by when they last changed, newest first. */
+  tasks: TaskSummary[];
 }
 
 export type PauseReason = 'limit' | 'threshold' | 'manual' | 'connection';

@@ -52,7 +52,7 @@ export function agentViews(): AgentClassView[] {
       customised: row.prompt !== null,
       protocol:
         name === 'task'
-          ? taskProtocolText({ branch: 'workshop/task-<id>', base: '<default branch>' })
+          ? taskProtocolText({ branch: 'workshop/task-<id>-<title>', base: '<default branch>', publishes: true })
           : protocolText({ branch: 'workshop/<number>-<title>', base: '<default branch>', publishes: publishes(name) }),
       maxTurns: row.max_turns,
       timeoutMin: row.timeout_min,

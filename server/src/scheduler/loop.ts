@@ -12,9 +12,10 @@ import { appendLog, deleteLog, getRun, RUNNING_SQL, type RunRow } from '../runs.
 import { check, HttpError } from '../http/util.ts';
 import { sweepExpiredTokens } from '../http/tokens.ts';
 import { getSettings } from '../settings.ts';
+import { activeTaskRunId, createTask, deleteTask, getTask, type TaskRow } from '../tasks.ts';
 import { activeRunId, blockersOf, getRepo, getTicket, isAllowedAuthor, labelsOf, setPrioritised, setPush, ticketInScope, type RepoRow, type TicketRow } from '../tickets.ts';
 import { nextStep, parseLabels } from '../workflow/labels.ts';
-import { AGENT_INFO } from '../workflow/prompts.ts';
+import { AGENT_INFO, TASK_AGENTS } from '../workflow/prompts.ts';
 import { allowanceBlock, apiCapBlock, pickSubscription, clockTopics, dependencyBlock, inScope, isUnclassified, localTime, modeBlock, pickHost, priorityBlock, pushEnded, stepPriority, withinHours, type ClockState, type HostLoad } from './gates.ts';
 import { advanceMerge } from './merge.ts';
 import { abortRun, cancelPause, drive, isDriving, launch, onRunSettled, resume, switchConnection } from './runner.ts';
@@ -238,7 +239,7 @@ export function resumePaused(s: Settings, now: number) {
         void abortRun(
           r.id,
           r.ticket_id === null
-            ? `${why}, so Workshop stopped this task. Start it again from the Tasks page.`
+            ? `${why}, so Workshop stopped this agent. Start another agent from the task's page.`
             : `${why}, so Workshop stopped this agent. A new one starts this stage again when a subscription is free.`,
         );
         continue;
@@ -387,43 +388,58 @@ function agentGate(agent: AgentName, pool: ReturnType<typeof subscriptions>, spe
   return gate(blockedBy, useConnection);
 }
 
-/** The gates for a task now. The operation mode and hours never hold a task: you started it. */
-function taskGate(): Gate & { hostId: number | null } {
+/** The gates for an agent on a task now. The operation mode and hours never hold a task run: you started it. */
+function taskGate(agent: AgentName): Gate & { hostId: number | null } {
   const s = getSettings();
   const now = Date.now();
   const hosts = hostLoads();
   const hostId = pickHost(hosts);
-  return { ...agentGate('task', subscriptions(s, now), apiSpendSince(startOfDay(now, s.timezone)), s, hostId, hosts), hostId };
+  return { ...agentGate(agent, subscriptions(s, now), apiSpendSince(startOfDay(now, s.timezone)), s, hostId, hosts), hostId };
 }
 
+/** The most characters a task's description, or a run's instructions, may have. */
 export const MAX_TASK_PROMPT = 20_000;
 
 /**
- * Starts a task now: the Task agent with your prompt on a repository, outside the ticket workflow. The same
- * gates as Start now apply; there's no queue, so a closed gate refuses it. A stale allowance reading is read
- * again first, so an idle instance doesn't refuse with "Checking allowance". Returns the run id.
+ * The gates for an agent on a task, now. There's no queue, so a closed gate refuses it (409). A stale allowance
+ * reading is read again first, so an idle instance doesn't refuse with "Checking allowance".
  */
-export async function launchTask(p: { repoId: number; prompt: string; browser: boolean }): Promise<string> {
-  const repo = getRepo(p.repoId);
-  check(repo, 'Repository not found.', 404);
-  let gate = taskGate();
+async function openTaskGate(agent: AgentName) {
+  let gate = taskGate(agent);
   if (gate.blockedBy === 'Checking allowance' && gate.modelConnectionId) {
     try {
       // Wait for a check that's already running (the tick's, or Refresh) rather than refusing meanwhile.
       const running = probes.get(gate.modelConnectionId);
       await (running ?? probeAllowance(gate.modelConnectionId, true));
     } catch (err) {
-      throw new HttpError(409, `Can't start a task yet: Workshop couldn't read your Claude usage (${(err as Error).message.replace(/\.+$/, '')}).`);
+      throw new HttpError(409, `Can't start the agent yet: Workshop couldn't read your Claude usage (${(err as Error).message.replace(/\.+$/, '')}).`);
     }
-    gate = taskGate();
+    gate = taskGate(agent);
   }
-  check(!gate.blockedBy, `Can't start a task yet: ${gate.blockedBy}.`, 409);
+  check(!gate.blockedBy, `Can't start the agent yet: ${gate.blockedBy}.`, 409);
+  return gate;
+}
+
+/**
+ * Starts an agent on a task now, with your instructions: the same gates as Start now on a ticket, and one agent
+ * at a time per task. Returns the run id.
+ */
+export async function startTaskRun(p: { task: TaskRow; agent: AgentName; prompt: string | null; browser: boolean }): Promise<string> {
+  check(TASK_AGENTS.includes(p.agent), TASK_AGENT_ERROR);
+  check(!p.task.closed_at, 'Reopen this task to start another agent.', 409);
+  check(!activeTaskRunId(p.task.id), 'An agent is already working on this task.', 409);
+  const gate = await openTaskGate(p.agent);
+  // The gate may have waited, and the task may have been closed meanwhile. No await from here to the insert,
+  // so closing the task can't miss the new run.
+  const task = getTask(p.task.id);
+  check(task && !task.closed_at, 'Reopen this task to start another agent.', 409);
   const id = launch({
     ticketId: null,
-    repoId: repo.id,
+    taskId: task.id,
+    repoId: task.repo_id,
     prompt: p.prompt,
     browser: p.browser,
-    agent: 'task',
+    agent: p.agent,
     mode: 'normal',
     attempt: 1,
     environmentId: gate.hostId!,
@@ -431,7 +447,29 @@ export async function launchTask(p: { repoId: number; prompt: string; browser: b
     model: gate.model!,
     billing: gate.billing,
   });
-  return id!;
+  check(id, 'An agent is already working on this task.', 409);
+  return id;
+}
+
+export const TASK_AGENT_ERROR = `Choose one of these agents: ${TASK_AGENTS.map((a) => AGENT_INFO[a].label).join(', ')}.`;
+
+/**
+ * Creates a task on a repository and starts its first agent. The gate is checked before anything is stored,
+ * so a refusal leaves no task behind. Returns the task id.
+ */
+export async function newTask(p: { repoId: number; title: string; body: string; agent: AgentName; browser: boolean }): Promise<number> {
+  const repo = getRepo(p.repoId);
+  check(repo, 'Repository not found.', 404);
+  check(TASK_AGENTS.includes(p.agent), TASK_AGENT_ERROR);
+  await openTaskGate(p.agent);
+  const task = createTask({ repoId: repo.id, title: p.title, body: p.body });
+  try {
+    await startTaskRun({ task, agent: p.agent, prompt: null, browser: p.browser });
+  } catch (err) {
+    deleteTask(task.id);
+    throw err;
+  }
+  return task.id;
 }
 
 /** Every ticket Workshop could work on next, in order, each with the reason it's waiting (if any). */
@@ -544,11 +582,13 @@ async function readAllowance(connectionId: number, force: boolean) {
   }
 }
 
-async function cleanup(s: Settings) {
+export async function cleanup(s: Settings) {
   const cutoff = Date.now() - s.retentionDays * 86400_000;
   let deleted = false;
   for (const r of all<RunRow>("SELECT * FROM runs WHERE status IN ('succeeded', 'failed', 'cancelled', 'lost') AND ended_at < ?", cutoff)) {
     deleteLog(r.id);
+    // A task's runs are its history: their outcomes stay on the task page and in later runs' prompts.
+    if (r.task_id !== null) continue;
     run('DELETE FROM runs WHERE id = ?', r.id);
     deleted = true;
   }
