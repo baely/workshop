@@ -66,6 +66,7 @@ function RunBlock({ run, n, now }: { run: RunView; n: number; now: number }) {
           )}
           {r.tests && <span className="small muted">Tests: {r.tests}</span>}
           {r.findings.length > 0 && <Findings findings={r.findings} />}
+          {run.error && run.error !== r.summary && <span style={{ color: 'var(--error-text)', overflowWrap: 'anywhere' }}>{run.error}</span>}
         </>
       ) : (
         <>
@@ -112,9 +113,6 @@ function StartAgent({ task, agents }: { task: TaskView; agents: AgentName[] }) {
     </form>
   );
 }
-
-/** The agents you can start on a task; the same list the Tasks page gets. */
-const TASK_AGENTS: AgentName[] = ['task', 'design', 'design-review', 'implement', 'code-review'];
 
 export function Task() {
   const { id } = useParams();
@@ -180,7 +178,7 @@ export function Task() {
         )}
       </Panel>
       <Panel title="Start another agent">
-        <StartAgent task={t} agents={TASK_AGENTS} />
+        <StartAgent task={t} agents={t.agents} />
       </Panel>
     </div>
   );

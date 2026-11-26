@@ -147,9 +147,11 @@ const schemas: Record<string, Schema> = {
     latest: nullable(ref('RunView')),
     body: str,
     runs: { ...array(ref('RunView')), description: 'Every run on the task, oldest first.' },
+    agents: array(ref('TaskAgent')),
   }),
+  TaskAgent: enumOf('task', 'design', 'design-review', 'implement', 'code-review'),
   TaskRepo: object({ id: int, fullName: str }),
-  TasksView: object({ repos: array(ref('TaskRepo')), agents: array(ref('AgentName')), tasks: array(ref('TaskSummary')) }),
+  TasksView: object({ repos: array(ref('TaskRepo')), agents: array(ref('TaskAgent')), tasks: array(ref('TaskSummary')) }),
   TicketView: object({
     id: int,
     repo: str,
@@ -392,7 +394,7 @@ const paths: Record<string, Record<string, Op>> = {
     post: {
       summary:
         "Creates a task, a virtual ticket outside the label workflow, and starts its first agent now (the Task agent unless you choose another). Agents on a task share one branch, workshop/task-<id>-<title>, which Workshop pushes when it has commits; no pull request is opened. Ignores the operation mode and hours; the model, allowance, API cap and host gates still apply, and a closed gate refuses it (409) rather than queuing it, with nothing stored. title defaults to the description's first line. Read-only tokens can read the description, so don't put long-lived secrets in it.",
-      body: object({ repoId: int, title: str, body: str, agent: ref('AgentName'), browser: bool }, ['repoId', 'body']),
+      body: object({ repoId: int, title: nullable(str), body: str, agent: ref('TaskAgent'), browser: bool }, ['repoId', 'body']),
       status: '202',
       ok: ref('TaskView'),
       errors: [400, 403, 404, 409],
@@ -404,7 +406,7 @@ const paths: Record<string, Record<string, Op>> = {
       summary:
         "Starts another agent on a task now, with optional instructions (answers to the last agent's questions, or what to do next). The agent sees the task and every earlier run's instructions and report. One agent at a time per task; a closed task or a closed gate refuses it (409).",
       params: ['id'],
-      body: object({ agent: ref('AgentName'), prompt: str, browser: bool }, ['agent']),
+      body: object({ agent: ref('TaskAgent'), prompt: nullable(str), browser: bool }, ['agent']),
       status: '202',
       ok: ref('RunView'),
       errors: [400, 403, 404, 409],

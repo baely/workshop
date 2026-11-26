@@ -2911,7 +2911,8 @@ describe('tasks', () => {
     expect(prompt).toContain('### Run 1: Task, needs_info');
     expect(prompt).toContain('The host count comes from hostLoads().');
     expect(prompt).toContain('- Count paused runs?');
-    expect(prompt).toContain('## Your task\nYes, count paused runs. Fix it.');
+    expect(prompt).toContain("## Your task\nImplement the task, following the design at `docs/workshop/task-");
+    expect(prompt).toContain("The owner's instructions for this run:\n\nYes, count paused runs. Fix it.");
     expect(agent.files!['.workshop/system.md']).toContain('You are the Implementation agent');
     expect(agent.files!['.workshop/system.md']).toContain('Nothing happens automatically on a task');
     expect(fake.env.spec('prepare')!.env.BRANCH).toBe(getTask(taskId)!.branch);

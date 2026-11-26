@@ -27,7 +27,8 @@ export function taskState(t: Pick<TaskSummary, 'closed' | 'latest'>): { label: s
   if (t.closed) return { label: 'Closed', tone: 'idle' };
   const run = t.latest;
   if (!run) return { label: 'No agents yet', tone: 'idle' };
-  if (isActive(run) || !run.result) return runStatus(run);
+  // A run that failed or was stopped after the agent reported (a failed push, say) shows how it ended.
+  if (isActive(run) || !run.result || run.status !== 'succeeded') return runStatus(run);
   if (run.result.outcome === 'needs_info') return { label: 'Needs your answer', tone: 'attention' };
   if (run.result.outcome === 'failed') return { label: 'Failed', tone: 'error' };
   return { label: 'Done', tone: 'ok' };

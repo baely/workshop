@@ -278,6 +278,8 @@ export interface TaskView extends Omit<TaskSummary, 'runs'> {
   body: string;
   /** Every run on the task, oldest first. */
   runs: RunView[];
+  /** The agents you can start on a task. */
+  agents: AgentName[];
 }
 
 export interface TaskRepo {

@@ -753,6 +753,12 @@ describe('tasks', () => {
       expect(text.endsWith('## Your task\nUse webhooks.')).toBe(true);
     });
 
+    it('says when a run failed after the agent reported', () => {
+      const text = taskRunPrompt(ctx({ history: [item({ agent: 'implement', status: 'failed', error: 'Pushing failed (exit 1).' })] }));
+      expect(text).toContain('### Run 1: Implementation, done');
+      expect(text).toContain('The run then ended failed: Pushing failed (exit 1). Its commits may not have been pushed.');
+    });
+
     it('shows the error of a run without a result', () => {
       expect(taskRunPrompt(ctx({ history: [item({ status: 'failed', result: null, error: 'Reached the 200-turn limit.' })] }))).toContain(
         '### Run 1: Task, failed (2026-11-20)\n\nIt ended without a report: Reached the 200-turn limit.',
@@ -780,6 +786,8 @@ describe('tasks', () => {
       expect(last(ctx({ agent: 'implement' }))).toBe('Implement the task, following the design at `docs/workshop/task-3-x.md` if it exists.');
       expect(last(ctx({ agent: 'code-review' }))).toContain('Review the work on `workshop/task-3-x` (`git diff origin/main...HEAD`)');
       expect(last(ctx({ prompt: '   ' }))).toBe('Do what the task above describes.');
+      expect(last(ctx({ prompt: 'Make it faster.' }))).toBe('Make it faster.');
+      expect(last(ctx({ agent: 'design', prompt: 'Keep it short.' }))).toBe("Write or revise the design at `docs/workshop/task-3-x.md` and commit it.\n\nThe owner's instructions for this run:\n\nKeep it short.");
     });
 
     it("isn't fooled by run headings in the description or a report", () => {

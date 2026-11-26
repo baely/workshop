@@ -4,6 +4,7 @@ import { publish } from './events.ts';
 import { check } from './http/util.ts';
 import { toView, VIEW_SQL, type ViewRow } from './runs.ts';
 import { slugify } from './workflow/labels.ts';
+import { TASK_AGENTS } from './workflow/prompts.ts';
 
 /** A task: a virtual ticket outside the label workflow. Its runs point at it with `runs.task_id`. */
 export interface TaskRow {
@@ -102,5 +103,5 @@ export function taskView(id: number): TaskView | undefined {
   const t = one<TaskListRow>(`${TASK_SQL} WHERE tasks.id = ?`, id);
   if (!t) return undefined;
   const rows = all<ViewRow>(`${VIEW_SQL} WHERE runs.task_id = ? ORDER BY runs.started_at ASC, runs.rowid ASC`, id);
-  return { ...summary(t, rows.at(-1)), body: t.body, runs: rows.map(toView) };
+  return { ...summary(t, rows.at(-1)), body: t.body, runs: rows.map(toView), agents: TASK_AGENTS };
 }
