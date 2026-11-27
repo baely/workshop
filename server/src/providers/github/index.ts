@@ -18,7 +18,10 @@ import type {
 } from '../types.ts';
 
 export interface GitHubConfig {
+  /** How Workshop signs in: as its own GitHub App (the default), or as you, with a personal access token. */
+  auth?: 'app' | 'token';
   appId: number;
+  /** The App's slug, or with a token your login. */
   slug: string;
   owner: string;
   htmlUrl: string;
@@ -27,18 +30,39 @@ export interface GitHubConfig {
 }
 
 export interface GitHubSecret {
-  privateKey: string;
+  privateKey?: string;
+  token?: string;
 }
 
 export const githubInfo: ProviderInfo = {
   id: 'github',
   kind: 'vcs',
   name: 'GitHub',
-  description: 'Hosts your code. Workshop acts through its own GitHub App, so PRs and comments come from a bot you can review.',
+  description: 'Hosts your code. Workshop acts through its own GitHub App, so PRs and comments come from a bot you can review, or as you, with a personal access token.',
   setup: 'github-app',
   fields: [
-    { key: 'appId', label: 'App ID', type: 'text', required: true, help: 'Shown on the App\'s settings page on GitHub (Settings → Developer settings → GitHub Apps).' },
-    { key: 'privateKey', label: 'Private key', type: 'textarea', secret: true, required: true, help: 'Generate one on the same page and paste the whole .pem file.' },
+    {
+      key: 'auth',
+      label: 'Sign in as',
+      type: 'select',
+      defaultValue: 'app',
+      options: [
+        { value: 'app', label: "A GitHub App (Workshop's own bot)" },
+        { value: 'token', label: 'You, with a personal access token' },
+      ],
+    },
+    // '' is a connection saved before there was a choice: an App.
+    { key: 'appId', label: 'App ID', type: 'text', required: true, showIf: { key: 'auth', equals: ['app', ''] }, help: 'Shown on the App\'s settings page on GitHub (Settings → Developer settings → GitHub Apps).' },
+    { key: 'privateKey', label: 'Private key', type: 'textarea', secret: true, required: true, showIf: { key: 'auth', equals: ['app', ''] }, help: 'Generate one on the same page and paste the whole .pem file.' },
+    {
+      key: 'token',
+      label: 'Personal access token',
+      type: 'password',
+      secret: true,
+      required: true,
+      showIf: { key: 'auth', equals: ['token'] },
+      help: 'Fine-grained: contents, issues, pull requests and workflows (read and write) on the repositories Workshop should work on. Classic: the repo and workflow scopes. Commits, comments and pull requests are yours, and GitHub won\'t let you approve your own pull request: see the README.',
+    },
   ],
 };
 
@@ -121,7 +145,11 @@ const MERGEABILITY: Record<string, Mergeability> = {
 const shortWait = (retryAfter: number, options: { request: { retryCount: number } }) => options.request.retryCount === 0 && retryAfter <= 60;
 
 export class GitHubApp implements VcsHost, TicketSource {
-  private app: InstanceType<typeof App>;
+  /** Unset when signed in with a personal access token. */
+  private app!: InstanceType<typeof App>;
+  /** Signed in as you, with a personal access token. Unset for an App. */
+  private user?: Octokit;
+  private token?: string;
   private installationOf = new Map<string, number>();
   private identity?: { name: string; email: string };
   private cfg: GitHubConfig;
@@ -134,7 +162,11 @@ export class GitHubApp implements VcsHost, TicketSource {
       this.limitedUntil = Math.max(this.limitedUntil, Date.now() + retryAfter * 1000);
       return shortWait(retryAfter, options);
     };
-    this.app = new App({ appId: cfg.appId, privateKey: secret.privateKey, Octokit: Octokit.defaults({ throttle: { onRateLimit: limited, onSecondaryRateLimit: limited } }) });
+    const Throttled = Octokit.defaults({ throttle: { onRateLimit: limited, onSecondaryRateLimit: limited } });
+    if (cfg.auth === 'token') {
+      this.token = secret.token ?? '';
+      this.user = new Throttled({ auth: this.token });
+    } else this.app = new App({ appId: cfg.appId, privateKey: secret.privateKey ?? '', Octokit: Throttled });
   }
 
   rateLimitedUntil() {
@@ -142,17 +174,22 @@ export class GitHubApp implements VcsHost, TicketSource {
   }
 
   selfLogin() {
-    return `${this.cfg.slug}[bot]`;
+    return this.user ? this.cfg.slug : `${this.cfg.slug}[bot]`;
   }
 
-  /** Confirms the credentials work; returns the App's slug and owner. */
+  /** Confirms the credentials work; returns the App's slug and owner, or with a token your login for both. */
   async describe() {
+    if (this.user) {
+      const { data } = await this.user.request('GET /user');
+      return { slug: data.login, owner: data.login, htmlUrl: data.html_url };
+    }
     const { data } = await this.app.octokit.request('GET /app');
     if (!data) throw new Error('GitHub returned no App for these credentials.');
     return { slug: data.slug ?? '', owner: (data.owner as { login?: string } | null)?.login ?? '', htmlUrl: data.html_url };
   }
 
   async installations(): Promise<Installation[]> {
+    if (this.user) return [];
     const list = await this.app.octokit.paginate('GET /app/installations', { per_page: 100 });
     return list.map((i) => ({
       id: i.id,
@@ -174,11 +211,16 @@ export class GitHubApp implements VcsHost, TicketSource {
   }
 
   private async kit(repo: RepoRef) {
-    return this.app.getInstallationOctokit(await this.installationFor(repo));
+    return this.user ?? this.app.getInstallationOctokit(await this.installationFor(repo));
   }
 
   async listRepos(): Promise<RepoRef[]> {
     const repos: RepoRef[] = [];
+    if (this.user) {
+      // Every repository the token can push to. A fine-grained token only lists the repositories it was given.
+      const list = await this.user.paginate('GET /user/repos', { per_page: 100, sort: 'full_name' });
+      return list.filter((r) => r.permissions?.push && !r.archived).map((r) => ({ fullName: r.full_name, defaultBranch: r.default_branch, private: r.private, url: r.html_url }));
+    }
     for (const id of this.cfg.installations) {
       const kit = await this.app.getInstallationOctokit(id);
       const list = await kit.paginate('GET /installation/repositories', { per_page: 100 });
@@ -325,6 +367,10 @@ export class GitHubApp implements VcsHost, TicketSource {
   }
 
   async gitAccess(repo: RepoRef, write: boolean): Promise<GitAccess> {
+    // A personal access token can't be narrowed to one repository or to read-only: both steps get the token itself.
+    if (this.user) {
+      return { url: `https://x-access-token:${this.token}@github.com/${repo.fullName}.git`, cleanUrl: `https://github.com/${repo.fullName}.git`, ...(await this.commitIdentity(repo)) };
+    }
     const installation_id = await this.installationFor(repo);
     // A token for this one repository, with only the git access this step needs. Expires in an hour.
     const token = (permissions: Record<string, string>) =>
@@ -344,6 +390,10 @@ export class GitHubApp implements VcsHost, TicketSource {
   }
 
   private async commitIdentity(repo: RepoRef) {
+    if (!this.identity && this.user) {
+      const { data } = await this.user.request('GET /user');
+      this.identity = { name: data.login, email: `${data.id}+${data.login}@users.noreply.github.com` };
+    }
     if (!this.identity) {
       const login = `${this.cfg.slug}[bot]`;
       const { data } = await (await this.kit(repo)).request('GET /users/{username}', { username: login });
@@ -426,9 +476,7 @@ export class GitHubApp implements VcsHost, TicketSource {
     const reviews = await kit.paginate('GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews', { ...split(repo), pull_number: number, per_page: 100 });
     const allowed = new Set(reviewers.map((r) => r.toLowerCase()));
     // Only a review of the current head commit counts: pushing new work asks for a fresh decision.
-    const latest = reviews
-      .filter((r) => r.commit_id === pr.head.sha && allowed.has(r.user?.login.toLowerCase() ?? '') && (r.state === 'APPROVED' || r.state === 'CHANGES_REQUESTED'))
-      .at(-1);
+    const latest = reviews.filter((r) => r.commit_id === pr.head.sha && allowed.has(r.user?.login.toLowerCase() ?? '') && (r.state === 'APPROVED' || this.asksForChanges(r))).at(-1);
     return {
       number,
       url: pr.html_url,
@@ -439,11 +487,20 @@ export class GitHubApp implements VcsHost, TicketSource {
     };
   }
 
+  /**
+   * Whether a review sends the ticket back. With a personal access token the pull request is your own, and GitHub
+   * only lets you comment on it: a comment review from you counts as requesting changes. Workshop itself never reviews.
+   */
+  private asksForChanges(r: { state: string; user?: { login: string } | null }) {
+    if (r.state === 'CHANGES_REQUESTED') return true;
+    return Boolean(this.user) && r.state === 'COMMENTED' && r.user?.login.toLowerCase() === (this.cfg.slug ?? '').toLowerCase();
+  }
+
   async reviewFeedback(repo: RepoRef, number: number, reviewers: string[]): Promise<ReviewFeedback[]> {
     const kit = await this.kit(repo);
     const allowed = new Set(reviewers.map((r) => r.toLowerCase()));
     const reviews = await kit.paginate('GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews', { ...split(repo), pull_number: number, per_page: 100, ...FULL });
-    const latest = reviews.filter((r) => r.state === 'CHANGES_REQUESTED' && allowed.has(r.user?.login.toLowerCase() ?? '')).at(-1);
+    const latest = reviews.filter((r) => this.asksForChanges(r) && allowed.has(r.user?.login.toLowerCase() ?? '')).at(-1);
     if (!latest) return [];
     const inline = await kit.paginate('GET /repos/{owner}/{repo}/pulls/{pull_number}/comments', { ...split(repo), pull_number: number, per_page: 100, ...FULL });
     const html = (x: object) => imageRefs((x as { body_html?: string }).body_html ?? '');

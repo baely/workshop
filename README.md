@@ -35,7 +35,7 @@ Any agent can stop and ask you a question as a comment on the issue. You answer,
 
 State lives in `workshop/` labels on the issue, so you can steer a ticket on GitHub. For example, remove `workshop/skip` to have a declined ticket classified again. The full table is in [docs/design/workflow.md](docs/design/workflow.md).
 
-Agents work as Workshop's own GitHub App bot, so you review their pull requests normally and GitHub notifies you about questions and review requests.
+Agents work as Workshop's own GitHub App bot, so you review their pull requests normally and GitHub notifies you about questions and review requests. (Workshop can sign in as you with a personal access token instead: see [Set up](#1-github).)
 
 Before starting an agent, Workshop checks:
 - the operation mode and operating hours;
@@ -77,6 +77,14 @@ Click **Create the GitHub App**. GitHub opens a pre-filled page; click **Create 
 - **Redirects:** GitHub sends your browser back to the address you used to open Workshop, so it doesn't need to be reachable from GitHub itself. If GitHub refuses an `http://` LAN address during setup, do the one-time setup through an HTTPS address. Alternatively, create an App by hand and use **Use an existing App instead** (App ID plus a private key).
 
 Creating the App also enrols **GitHub Issues** as the ticket source and adds the App's owner to your ticket authors.
+
+**Or sign in as yourself, with a personal access token.** Click **Use an existing App or a personal access token instead**, choose **You, with a personal access token** and paste the token. Use this when you can't install an App on an organisation, or want the commits, comments and pull requests to be yours. To switch a connection that already uses an App, edit it and make the same choice.
+
+- **Token:** a fine-grained token with contents, issues, pull requests and workflows (read and write) on the repositories Workshop should work on, or a classic token with the `repo` and `workflow` scopes. The **Repositories** list shows every repository the token can push to.
+- **Reviewing:** GitHub doesn't let you approve or request changes on your own pull request, and nobody is notified of a question you ask yourself, so check Workshop's **Needs you** list.
+  - To accept the work, merge the pull request yourself on GitHub, or turn on **Merge without review** for the repository. Another ticket author's approval still works.
+  - To send it back, submit a review with **Comment**. A comment review from you on the latest commit counts as requesting changes. Plain comments on the pull request still don't.
+- **Less isolation than the App:** the App hands each fetch and push a token for one repository that expires in an hour. A personal access token can't be narrowed, so those two containers get the token itself. The container running Claude still gets no GitHub credentials.
 
 ### 2. Agent hosts
 
@@ -149,7 +157,7 @@ Back up the data volume to keep history and configuration. Ticket state lives in
 
 - **Sign-in:** password plus TOTP; server-side sessions in HttpOnly cookies (Secure over HTTPS); 15-minute lockout after 5 failed attempts; cross-site writes refused; Content-Security-Policy.
 - **Secrets:** GitHub App key, Claude token, API key, SSH and TLS keys are encrypted at rest (AES-256-GCM) and never sent back to the browser.
-- **Agents never hold GitHub credentials.** A read token (one repository, one hour) is used to fetch and a write token to push, each in its own short container. The container running Claude has neither. Workshop itself applies labels, comments and pull requests from the agent's validated result.
+- **Agents never hold GitHub credentials.** A read token (one repository, one hour) is used to fetch and a write token to push, each in its own short container (with a personal access token, both get that token). The container running Claude has neither. Workshop itself applies labels, comments and pull requests from the agent's validated result.
 - **Untrusted text:** only issues from your ticket authors are processed, and other people's comments are dropped. Agents are told that ticket text can't change their rules.
 - **Isolation:** agents run as a non-root user in throwaway containers with CPU and memory limits. They have open network access (for package installs) and skip permission prompts, which is what that mode is designed for.
 - **Docker access is root-equivalent** on each agent host, whether by socket, SSH or TLS. Use machines you're comfortable giving that to.

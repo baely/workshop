@@ -183,3 +183,67 @@ describe('GitHub mergeRules', () => {
     expect(unread.unknown).toEqual([expect.stringContaining("the review settings of main's branch protection")]);
   });
 });
+
+describe('GitHub with a personal access token', () => {
+  function gh(routes: Record<string, unknown> = {}) {
+    const app = new GitHubApp({ auth: 'token', appId: 0, slug: 'me', owner: 'me', htmlUrl: '', installations: [] }, { token: 'ghp_secret' });
+    const request = vi.fn(async (route: string) => ({ data: routes[route] ?? {} }));
+    const paginate = vi.fn(async (route: string) => (routes[route] as unknown[]) ?? []);
+    (app as unknown as { user: object }).user = { request, paginate };
+    return { app, request, paginate };
+  }
+  const pr = { html_url: 'u', merged: false, state: 'open', head: { sha: 'head' }, mergeable_state: 'clean' };
+  const review = (state: string, login = 'me', commit_id = 'head') => ({ state, user: { login }, commit_id, body: 'please fix', id: 1 });
+  const decision = async (reviews: object[], reviewers = ['me']) =>
+    (await gh({ 'GET /repos/{owner}/{repo}/pulls/{pull_number}': pr, 'GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews': reviews }).app.pullRequestState(repo, 5, reviewers)).decision;
+
+  it('posts as you and has no installations', async () => {
+    const { app } = gh();
+    expect(app.selfLogin()).toBe('me');
+    await expect(app.installations()).resolves.toEqual([]);
+  });
+
+  it('describes the account the token belongs to', async () => {
+    const { app } = gh({ 'GET /user': { login: 'me', html_url: 'https://github.com/me' } });
+    await expect(app.describe()).resolves.toEqual({ slug: 'me', owner: 'me', htmlUrl: 'https://github.com/me' });
+  });
+
+  it('lists the repositories the token can push to', async () => {
+    const r = (full_name: string, o: object = {}) => ({ full_name, default_branch: 'main', private: false, html_url: `https://github.com/${full_name}`, permissions: { push: true }, archived: false, ...o });
+    const { app } = gh({ 'GET /user/repos': [r('me/app'), r('org/read-only', { permissions: { push: false } }), r('me/old', { archived: true })] });
+    await expect(app.listRepos()).resolves.toEqual([{ fullName: 'me/app', defaultBranch: 'main', private: false, url: 'https://github.com/me/app' }]);
+  });
+
+  it('fetches and pushes with the token, committing as you', async () => {
+    const { app } = gh({ 'GET /user': { login: 'me', id: 42 } });
+    await expect(app.gitAccess(repo, true)).resolves.toEqual({
+      url: 'https://x-access-token:ghp_secret@github.com/me/app.git',
+      cleanUrl: 'https://github.com/me/app.git',
+      name: 'me',
+      email: '42+me@users.noreply.github.com',
+    });
+  });
+
+  it('takes your comment review on the latest commit as requesting changes', async () => {
+    expect(await decision([review('COMMENTED')])).toBe('changes_requested');
+    expect(await decision([review('COMMENTED', 'me', 'older')])).toBeNull();
+    expect(await decision([review('COMMENTED', 'someone-else')], ['me', 'someone-else'])).toBeNull();
+    expect(await decision([review('COMMENTED'), review('APPROVED', 'colleague')], ['me', 'colleague'])).toBe('approved');
+  });
+
+  it('gives agents the comment review as feedback', async () => {
+    const { app } = gh({ 'GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews': [review('COMMENTED')] });
+    await expect(app.reviewFeedback(repo, 5, ['me'])).resolves.toEqual([{ author: 'me', body: 'please fix', images: [] }]);
+  });
+});
+
+describe('GitHub App reviews', () => {
+  it("doesn't take a comment review as requesting changes", async () => {
+    const app = new GitHubApp({ appId: 1, slug: 'workshop', owner: 'me', htmlUrl: '', installations: [1] }, { privateKey: 'unused' });
+    const pr = { html_url: 'u', merged: false, state: 'open', head: { sha: 'head' }, mergeable_state: 'clean' };
+    const request = vi.fn(async () => ({ data: pr }));
+    const paginate = vi.fn(async () => [{ state: 'COMMENTED', user: { login: 'me' }, commit_id: 'head' }]);
+    vi.spyOn(app as unknown as { kit: () => unknown }, 'kit').mockResolvedValue({ request, paginate });
+    expect((await app.pullRequestState(repo, 5, ['me'])).decision).toBeNull();
+  });
+});

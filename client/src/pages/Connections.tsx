@@ -278,7 +278,10 @@ function GitHubSetup({ onExisting }: { onExisting: () => void }) {
   };
   return (
     <div className="panel-body stack">
-      <p>Pull requests and comments come from Workshop's own bot, so you can review its work on GitHub and get notified when it asks a question.</p>
+      <p>
+        Pull requests and comments come from Workshop's own bot, so you can review its work on GitHub and get notified when it asks a question. With a personal access token they come from you
+        instead, and you merge its pull requests yourself.
+      </p>
       <ol className="small" style={{ margin: 0, paddingLeft: 20 }}>
         <li>Create the App: GitHub shows a pre-filled page. Click Create GitHub App.</li>
         <li>Install it on your account and any organisations, choosing which repositories it can see.</li>
@@ -290,7 +293,7 @@ function GitHubSetup({ onExisting }: { onExisting: () => void }) {
           Create the GitHub App
         </button>
         <button className="link" onClick={onExisting}>
-          Use an existing App instead
+          Use an existing App or a personal access token instead
         </button>
       </div>
     </div>
@@ -496,7 +499,7 @@ export function Connections() {
                     {...(section.kind === 'model' && items.length > 1 ? { rank: i, last: i === items.length - 1, onMove: (by: -1 | 1) => move(items, i, by) } : {})}
                     provider={providerFor(c.provider)}
                     onEdit={() => setEditing({ provider: providerFor(c.provider), connection: c })}
-                    extra={c.provider === 'github' ? <Installations connection={c} /> : undefined}
+                    extra={c.provider === 'github' && c.config.auth !== 'token' ? <Installations connection={c} /> : undefined}
                   />
                 ))}
               </ul>
