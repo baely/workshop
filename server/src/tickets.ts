@@ -24,6 +24,7 @@ export interface RepoRow {
   selection: RepoSelection;
   merge_without_review: number;
   push_to_default: number;
+  raise_tickets: number;
   merge_warning: string | null;
 }
 
@@ -50,6 +51,7 @@ export interface TicketRow {
   ui: number;
   rescue: string | null;
   handoff: string | null;
+  raised: string | null;
   rework: string | null;
   dismissed: string | null;
   prioritised: number;
@@ -62,6 +64,14 @@ export const MAX_ATTEMPTS = 2;
 
 export const rescueOf = (t: TicketRow): Rescue | null => (t.rescue ? JSON.parse(t.rescue) : null);
 export const handoffOf = (t: TicketRow): Handoff | null => (t.handoff ? JSON.parse(t.handoff) : null);
+/** The tickets Workshop opened for what this ticket's agents noticed, and the run that reported each. */
+export interface Raised {
+  number: number;
+  url: string;
+  title: string;
+  runId: string;
+}
+export const raisedOf = (t: TicketRow): Raised[] => (t.raised ? JSON.parse(t.raised) : []);
 export const reworkOf = (t: TicketRow): Rework | null => (t.rework ? JSON.parse(t.rework) : null);
 
 export const repoRef = (r: RepoRow): RepoRef => ({ fullName: r.full_name, defaultBranch: r.default_branch, private: Boolean(r.private), url: r.url });
@@ -130,6 +140,7 @@ export function repoView(r: RepoRow): RepoView {
     mergeWithoutReview: Boolean(r.merge_without_review),
     mergeWarning: r.merge_without_review ? r.merge_warning : null,
     pushToDefault: Boolean(r.push_to_default),
+    raiseTickets: Boolean(r.raise_tickets),
   };
 }
 

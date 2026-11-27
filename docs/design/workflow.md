@@ -24,6 +24,7 @@ Workshop stores a ticket's state in labels on the issue, all prefixed `workshop/
 | `workshop/failed` | A stage failed twice, or you pressed Stop. Remove it to retry |
 | `workshop/running` | An agent is working on it now (information only) |
 | `workshop/nominated` | You want this ticket worked on. Only matters in a repository set to nominated tickets |
+| `workshop/raised` | An agent opened this ticket for something it noticed while working on another (information, and its agents can't open more) |
 
 At most one stage label is present. `needs-info`, `skip` and `failed` sit alongside it and pause the ticket.
 
@@ -134,6 +135,13 @@ A repository with **Push to the default branch, no pull request** on has no pull
 | the move is refused (a branch rule, or the default branch moved meanwhile) | Raise a `merge-failed` alert and try again on the next check |
 
 The commit's message is `pushMessage()`: the first line of the branch's first commit plus `(#n)`, then the later commits as a list. Severe findings that remain after a rework add `workshop/needs-info` instead of pushing; removing it pushes. A ticket that already has a pull request (the setting was turned on later) finishes through the pull request.
+## Tickets for what agents notice
+
+In a repository with **Agents open tickets for what they notice** on, every agent but the Classifier gets a `noticed` list in its result schema and a rule in the protocol: report real work outside the ticket there, don't do it. `raiseNoticed` in `scheduler/runner.ts` opens a ticket for each when the run is published (at most `MAX_NOTICED`, 3), labelled `workshop/raised`, and Workshop's comment on the ticket lists them.
+
+- Each opened ticket is recorded in `tickets.raised` at once, so a publish retried after a GitHub failure doesn't open it twice, and a later run on the same ticket doesn't repeat it. A title that an open ticket in the repository already has is left out.
+- A ticket carrying `workshop/raised` gets neither the schema field nor the rule (`mayRaise`), so the chain stops after one step.
+- The new tickets follow the repository's usual rules: they wait for `workshop/nominated` in a nominated-only repository, and their author (the App's bot, or you with a personal access token) has to be an allowed author.
 
 ## Nominated tickets only
 

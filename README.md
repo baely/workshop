@@ -118,6 +118,10 @@ Once the App is installed, the **Repositories** list shows every repository it c
 - If the default branch has moved on, Workshop merges it into the ticket's branch first; a conflict goes to the Merge agent.
 - Severe problems that survive a rework hold the ticket with `workshop/needs-info` and a comment listing them. Remove the label to push it as it is.
 - A ticket that already has a pull request keeps using it. A rule on the default branch that refuses the push raises an alert.
+**Agents open tickets for what they notice** (off by default) lets an agent report a real problem it comes across outside its ticket (a bug somewhere else, something already broken, a follow-up the change makes necessary) instead of fixing it there or ignoring it. Workshop opens a ticket for each, labelled `workshop/raised`, with a note saying which ticket it came from, and lists them in its comment on that ticket.
+- At most three per run. One whose title an open ticket already has is left out.
+- In a repository set to nominated tickets, the new tickets wait until you nominate them. In one that works on all open tickets, they're picked up like any other.
+- Agents working on a `workshop/raised` ticket aren't asked, so noticed work can't keep producing more.
 
 ### 5. Settings
 

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { repoChanges } from '../src/repo-settings.ts';
 
-const repo = { selection: 'nominated' as const, priority: 0, image: null, mergeWithoutReview: false, pushToDefault: false };
-const draft = { selection: 'nominated', priority: '0', image: '', mergeWithoutReview: false, pushToDefault: false };
+
+const repo = { selection: 'nominated' as const, priority: 0, image: null, mergeWithoutReview: false, pushToDefault: false, raiseTickets: false };
+const draft = { selection: 'nominated', priority: '0', image: '', mergeWithoutReview: false, pushToDefault: false, raiseTickets: false };
 
 describe('repoChanges', () => {
   it('is empty when nothing differs from what is saved', () => {
@@ -16,6 +17,7 @@ describe('repoChanges', () => {
     expect(repoChanges({ ...repo, image: 'a:1' }, draft)).toEqual({ image: '' });
     expect(repoChanges(repo, { ...draft, mergeWithoutReview: true })).toEqual({ mergeWithoutReview: true });
     expect(repoChanges(repo, { ...draft, pushToDefault: true })).toEqual({ pushToDefault: true });
+    expect(repoChanges(repo, { ...draft, raiseTickets: true })).toEqual({ raiseTickets: true });
     expect(repoChanges({ ...repo, mergeWithoutReview: true }, draft)).toEqual({ mergeWithoutReview: false });
   });
 });

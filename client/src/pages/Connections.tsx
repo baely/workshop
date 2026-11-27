@@ -306,7 +306,7 @@ function RepoRow({ repo, onChange }: { repo: RepoView; onChange: (id: number, bo
     setEnabling(enabled);
     onChange(repo.id, { enabled }).finally(() => setEnabling(null));
   };
-  const saved = (): RepoDraft => ({ selection: repo.selection, priority: String(repo.priority), image: repo.image ?? '', mergeWithoutReview: repo.mergeWithoutReview, pushToDefault: repo.pushToDefault });
+  const saved = (): RepoDraft => ({ selection: repo.selection, priority: String(repo.priority), image: repo.image ?? '', mergeWithoutReview: repo.mergeWithoutReview, pushToDefault: repo.pushToDefault, raiseTickets: repo.raiseTickets });
   const [draft, setDraft] = useState(saved);
   const [saving, setSaving] = useState(false);
   const changes = repoChanges(repo, draft);
@@ -363,6 +363,10 @@ function RepoRow({ repo, onChange }: { repo: RepoView; onChange: (id: number, bo
             <label className="row small" title="Reviewed work goes on the default branch as one commit. No pull request is opened and nothing waits for you.">
               <input type="checkbox" checked={draft.pushToDefault} onChange={(e) => setDraft({ ...draft, pushToDefault: e.target.checked })} />
               <span className="muted">Push to {repo.defaultBranch}, no pull request</span>
+            </label>
+            <label className="row small" title="When an agent comes across a problem outside its ticket, it reports it instead of fixing it there, and Workshop opens a ticket.">
+              <input type="checkbox" checked={draft.raiseTickets} onChange={(e) => setDraft({ ...draft, raiseTickets: e.target.checked })} />
+              <span className="muted">Agents open tickets for what they notice</span>
             </label>
             <label className="row small">
               <span className="muted">Image</span>

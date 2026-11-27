@@ -2420,6 +2420,74 @@ describe('the pushed commit message', () => {
   });
 });
 
+describe('tickets for what agents notice', () => {
+  const noticed = [
+    { title: 'Login page crashes on an empty password', body: 'src/login.ts:40 reads password.length without a guard.' },
+    { title: 'Add  dark mode', body: 'The same as this ticket, so it is left out.' },
+  ];
+  const env = (n: object[] = noticed) => new FakeEnv({ prepare: ['ok'], run: [result({ outcome: 'done', summary: 'Done.', noticed: n })], publish: [line({ before: '', after: 'def5678', ahead: 1 })] });
+  const file = (e: InstanceType<typeof FakeEnv>, name: string) => String(e.started.find((s) => s.cmd?.[0] === 'run')!.files![name]);
+
+  beforeEach(() => {
+    run('UPDATE repos SET raise_tickets = 1 WHERE id = 1');
+    run('UPDATE tickets SET raised = NULL WHERE id = 1');
+    let next = 40;
+    fake.tickets.createTicket = vi.fn(async () => ({ number: ++next, url: `https://github.com/me/app/issues/${next}` }));
+  });
+  afterEach(() => run('UPDATE repos SET raise_tickets = 0 WHERE id = 1'));
+
+  it('opens a ticket for each, labelled and traced back, and says so on the ticket', async () => {
+    fake.env = env();
+    expect((await settle(go())).status).toBe('succeeded');
+    expect(fake.tickets.createTicket).toHaveBeenCalledTimes(1); // the second has an open ticket's title
+    const [, made] = fake.tickets.createTicket.mock.calls[0];
+    expect(made).toMatchObject({ title: 'Login page crashes on an empty password', labels: [label.raised] });
+    expect(made.body).toContain('src/login.ts:40');
+    expect(made.body).toContain("Workshop's Implementation agent noticed this while working on #3");
+    expect(fake.tickets.comment).toHaveBeenCalledWith(expect.anything(), 3, expect.stringContaining('opened as its own ticket:\n- #41 Login page crashes on an empty password'));
+  });
+
+  it('asks the agent for them in its schema and its rules', async () => {
+    fake.env = env([]);
+    await settle(go());
+    expect(JSON.parse(file(fake.env, '.workshop/schema.json')).properties.noticed).toMatchObject({ type: 'array', maxItems: 3 });
+    expect(file(fake.env, '.workshop/system.md')).toContain('List it under "noticed"');
+    expect(fake.tickets.createTicket).not.toHaveBeenCalled();
+  });
+
+  it("doesn't open the same one again from a later run on the ticket", async () => {
+    fake.env = env();
+    await settle(go());
+    run('DELETE FROM runs');
+    fake.env = env();
+    await settle(go());
+    expect(fake.tickets.createTicket).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens at most three from one run', async () => {
+    fake.env = env([1, 2, 3, 4, 5].map((i) => ({ title: `Problem ${i}`, body: 'b' })));
+    await settle(go());
+    expect(fake.tickets.createTicket).toHaveBeenCalledTimes(3);
+  });
+
+  it("doesn't ask, or open any, on a ticket that was itself opened this way", async () => {
+    run('UPDATE tickets SET labels = ? WHERE id = 1', JSON.stringify([label.raised]));
+    fake.env = env();
+    await settle(go());
+    expect(JSON.parse(file(fake.env, '.workshop/schema.json')).properties.noticed).toBeUndefined();
+    expect(file(fake.env, '.workshop/system.md')).not.toContain('"noticed"');
+    expect(fake.tickets.createTicket).not.toHaveBeenCalled();
+  });
+
+  it("doesn't ask, or open any, with the setting off", async () => {
+    run('UPDATE repos SET raise_tickets = 0 WHERE id = 1');
+    fake.env = env();
+    await settle(go());
+    expect(JSON.parse(file(fake.env, '.workshop/schema.json')).properties.noticed).toBeUndefined();
+    expect(fake.tickets.createTicket).not.toHaveBeenCalled();
+  });
+});
+
 describe('manual pushes', () => {
   const ticket = () => getTicket(1)!;
   const queued = () => buildQueue().find((c) => c.ticket.id === 1);

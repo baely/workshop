@@ -263,10 +263,16 @@ export const MIGRATIONS = [
   ALTER TABLE runs ADD COLUMN publish_failing_since INTEGER; -- first temporary failure, for the 6-hour give-up
   `,
   `ALTER TABLE tickets ADD COLUMN blockers_checked_at INTEGER; -- last read of a held ticket's blockers, for the rotation`,
-  `ALTER TABLE tickets ADD COLUMN bypass_limits INTEGER NOT NULL DEFAULT 0; -- you let it run past your subscription limits; cleared when it closes`,
-  // Per-repository: land finished work on the default branch itself, with no pull request.
+  // DEPLOY BRANCH ONLY: this instance's database applied push_to_default before upstream added bypass_limits, so
+  // here it stays ahead of it. Upstream's order differs; never copy this order into a pull request.
   `
   ALTER TABLE repos ADD COLUMN push_to_default INTEGER NOT NULL DEFAULT 0;
+  `,
+  `ALTER TABLE tickets ADD COLUMN bypass_limits INTEGER NOT NULL DEFAULT 0; -- you let it run past your subscription limits; cleared when it closes`,
+  // Agents may report work they noticed outside their ticket; Workshop opens tickets for it and remembers which.
+  `
+  ALTER TABLE repos ADD COLUMN raise_tickets INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE tickets ADD COLUMN raised TEXT; -- JSON: the tickets opened from this one's runs
   `,
 ];
 
