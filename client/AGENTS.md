@@ -28,9 +28,9 @@ The Workshop UI: React 19, React Router 8, Vite. Plain CSS with custom propertie
 
 ## Visual rules
 
-The brief: subtle, workshop-like, **browns and greys only**. No textures, illustrations or themed props, and no themed names (Dashboard, not "Workbench").
+The brief: subtle and plain, **neutral greys with one blue accent**. No textures, illustrations or themed props, and no themed names (Dashboard, not "Workbench").
 
-- **Colours** are tokens in `theme.css`: `--bg`, `--surface`, `--raised`, `--line`, `--text`, `--muted`, `--accent` (brown), `--on-accent`.
+- **Colours** are tokens in `theme.css`: `--bg`, `--surface`, `--raised`, `--line`, `--text`, `--muted`, `--accent` (blue), `--on-accent`.
   - Dark by default; light follows the system, unless the toggle sets `data-theme` on `<html>`.
   - **Every text pair must meet WCAG AA in both themes.** Check the contrast when adding a token.
 - **Status colours** (`--ok`, `--attention`, `--error`) are muted and used for dots and fills, always with words next to them (`<Status tone>`). For text use `--error-text`: plain `--error` is too dim for text on dark surfaces.

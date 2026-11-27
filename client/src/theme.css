@@ -1,26 +1,26 @@
-/* Workshop: warm browns and greys, plain components. Dark tokens are the default; light follows
-   the system setting unless the toggle (data-theme on <html>) overrides it. */
+/* Workshop: neutral greys with one blue accent, plain components. Dark tokens are the default; light
+   follows the system setting unless the toggle (data-theme on <html>) overrides it. */
 
 :root {
-  --bg: #1c1a17;
-  --surface: #26221e;
-  --raised: #302b26;
-  --line: #3c362f;
-  --text: #e6e0d7;
-  --muted: #a0978b;
-  --accent: #b5835a;
-  --on-accent: #1c1a17;
-  --ok: #7f8c5c;
-  --attention: #b38b42;
-  --error: #a0503f;
+  --bg: #0c0d10;
+  --surface: #131518;
+  --raised: #1b1e23;
+  --line: #2a2e35;
+  --text: #e8eaed;
+  --muted: #9aa1ac;
+  --accent: #5b9bff;
+  --on-accent: #0c0d10;
+  --ok: #3fa56b;
+  --attention: #d39b2a;
+  --error: #d9534f;
   /* Status colours above are for dots; text needs more contrast against the surfaces. */
-  --error-text: #d9917f;
-  /* Chart series, in order; see the Usage page. */
-  --series-1: #c99a6b;
-  --series-2: #7d6a58;
-  --series-3: #b0a89c;
-  --series-4: #8c5a36;
-  --series-other: #ddd3c4;
+  --error-text: #ff8f88;
+  /* Chart series, in order; see the Usage page. Checked for colour-blind separation on --surface. */
+  --series-1: #4f8ff7;
+  --series-2: #cf7a2a;
+  --series-3: #2aa79b;
+  --series-4: #9b7be8;
+  --series-other: #5a616c;
   --font: 'IBM Plex Sans', system-ui, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, monospace;
   --radius: 4px;
@@ -30,39 +30,45 @@
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme='dark']) {
-    --bg: #dedad4;
-    --surface: #ece9e4;
-    --raised: #f6f4f1;
-    --line: #c7c1b8;
-    --text: #26221e;
-    --muted: #645c53;
-    --accent: #7e5232;
-    --on-accent: #f6f4f1;
-    --error-text: #9a4535;
-    --series-1: #8a5a30;
-    --series-2: #9c948a;
-    --series-3: #4f3a28;
-    --series-4: #b08a63;
-    --series-other: #cdc7be;
+    --bg: #f4f5f7;
+    --surface: #ffffff;
+    --raised: #eef0f3;
+    --line: #d8dce2;
+    --text: #15181d;
+    --muted: #5b6470;
+    --accent: #1f5fd6;
+    --on-accent: #ffffff;
+    --ok: #2e8b57;
+    --attention: #b7791f;
+    --error: #c93a35;
+    --error-text: #b3261e;
+    --series-1: #1f5fd6;
+    --series-2: #c2641a;
+    --series-3: #0e8f82;
+    --series-4: #7a4fd0;
+    --series-other: #b4bac4;
     color-scheme: light;
   }
 }
 
 :root[data-theme='light'] {
-  --bg: #dedad4;
-  --surface: #ece9e4;
-  --raised: #f6f4f1;
-  --line: #c7c1b8;
-  --text: #26221e;
-  --muted: #645c53;
-  --accent: #7e5232;
-  --on-accent: #f6f4f1;
-  --error-text: #9a4535;
-  --series-1: #8a5a30;
-  --series-2: #9c948a;
-  --series-3: #4f3a28;
-  --series-4: #b08a63;
-  --series-other: #cdc7be;
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --raised: #eef0f3;
+  --line: #d8dce2;
+  --text: #15181d;
+  --muted: #5b6470;
+  --accent: #1f5fd6;
+  --on-accent: #ffffff;
+  --ok: #2e8b57;
+  --attention: #b7791f;
+  --error: #c93a35;
+  --error-text: #b3261e;
+  --series-1: #1f5fd6;
+  --series-2: #c2641a;
+  --series-3: #0e8f82;
+  --series-4: #7a4fd0;
+  --series-other: #b4bac4;
   color-scheme: light;
 }
 
@@ -540,7 +546,7 @@ input[type='checkbox'] {
   padding: 0 6px;
   border-radius: 10px;
   background: var(--error);
-  color: #f6f4f1;
+  color: var(--on-accent);
 }
 
 /* Allowance meter */
