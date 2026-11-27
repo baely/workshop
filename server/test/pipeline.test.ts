@@ -26,9 +26,9 @@ const { bus } = await import('../src/events.ts');
 const { activity, getRun, readLog, runView } = await import('../src/runs.ts');
 const { sweepMedia } = await import('../src/media.ts');
 const { connectionPaused, drive, isDriving, launch, onRunSettled, PAUSE_GRACE_MS, requestPause, resume, stopRun } = await import('../src/scheduler/runner.ts');
-const { allocate, buildQueue, forgetProbe, hostLoads, launchNow, mergeApproved, probeAllowance, queueView, reattachRuns, refreshNow, resumeNow, resumePaused, settleManual, tick } = await import('../src/scheduler/loop.ts');
+const { allocate, allocatePass, buildQueue, forgetProbe, hostLoads, kick, launchNow, mergeApproved, probeAllowance, queueView, reattachRuns, refreshNow, resumeNow, resumePaused, settleManual, syncSoon, tick } = await import('../src/scheduler/loop.ts');
 const { setBypassLimits, setPrioritised, setPush, getTicket, ticketView, getRepo } = await import('../src/tickets.ts');
-const { syncRepo, HELD_CHECKS_PER_SYNC, LINK_BACKFILL_PER_SYNC } = await import('../src/scheduler/sync.ts');
+const { checkingBlockers, syncRepo, HELD_CHECKS_PER_SYNC, LINK_BACKFILL_PER_SYNC } = await import('../src/scheduler/sync.ts');
 const { pushMessage } = await import('../src/scheduler/merge.ts');
 const { getSettings, saveSettings } = await import('../src/settings.ts');
 const { label } = await import('../src/workflow/labels.ts');
@@ -1876,6 +1876,81 @@ describe('allocation', () => {
     await refreshNow();
     expect(fake.env.started.filter((spec: StepSpec) => spec.labels?.['workshop.probe'] === String(ids.model))).toHaveLength(1);
     expect(started()).toHaveLength(2);
+  });
+
+  describe('while a GitHub sync is running', () => {
+    let release = () => {};
+    let gate = Promise.resolve();
+    const ticket20 = () => one<{ id: number }>('SELECT id FROM tickets WHERE number = 20')!.id;
+    beforeEach(() => {
+      gate = new Promise<void>((r) => (release = r));
+    });
+    afterEach(async () => {
+      release();
+      await syncSoon(); // the sync left running ends before the fakes change
+      onRunSettled(() => {});
+    });
+
+    it('reuses a freed slot before the sync completes', async () => {
+      configure(1);
+      let listed = 0;
+      let synced = false;
+      fake.tickets.listChanged = async () => {
+        listed++;
+        await gate;
+        return [];
+      };
+      onRunSettled(kick);
+      const sync = syncSoon().then(() => (synced = true));
+      await vi.waitFor(() => expect(listed).toBe(1));
+      await tick(); // the timer's tick allocates without waiting for the sync
+      expect(started()).toHaveLength(1);
+      await settle(started()[0].id);
+      await vi.waitFor(() => expect(started()).toHaveLength(2), { timeout: 2000 });
+      expect(synced).toBe(false);
+      release();
+      await sync;
+    });
+
+    it("doesn't launch a ticket whose blockers it hasn't read yet", async () => {
+      configure(3);
+      const labels = [label.size('s'), label.stage('implement')];
+      fake.tickets.listChanged = async () => [{ number: 20, title: 'Ready', body: '', state: 'open', author: 'me', url: 'u', updatedAt: '2026-10-14T00:00:00Z', labels, openBlockers: 1 }];
+      fake.tickets.blockers = vi.fn(async (_r: unknown, n: number) => {
+        await gate;
+        return n === 20 ? [{ repo: 'me/app', number: 2, state: 'open', url: '' }] : [];
+      });
+      const sync = syncSoon();
+      await vi.waitFor(() => expect(checkingBlockers.has(ticket20())).toBe(true));
+      expect(buildQueue().find((c) => c.ticket.id === ticket20())?.blockedBy).toBe('Checking what it depends on');
+      allocate(getSettings(), Date.now());
+      expect(started().map((r) => r.ticket_id)).not.toContain(ticket20());
+      release();
+      await sync;
+      expect(checkingBlockers.size).toBe(0);
+      expect(buildQueue().find((c) => c.ticket.id === ticket20())?.blockedBy).toBe('Depends on #2');
+    });
+  });
+
+  it('never overlaps allocation passes, and runs one more for calls made during one', async () => {
+    configure(3);
+    run('DELETE FROM tickets WHERE number IN (21, 22)');
+    const a = allocatePass();
+    expect(started()).toHaveLength(2); // tickets 1 and 20, started before the first await
+    run(
+      `INSERT INTO tickets (repo_id, number, title, body, url, author, state, labels, updated_at) VALUES (1, 21, 'Ready', '', 'u', 'me', 'open', ?, '2026-10-14T00:00:00Z')`,
+      JSON.stringify([label.size('s'), label.stage('implement')]),
+    );
+    const b = allocatePass();
+    const c = allocatePass();
+    expect(b).toBe(a);
+    expect(c).toBe(a);
+    expect(started()).toHaveLength(2);
+    await a;
+    expect(started()).toHaveLength(3); // ticket 21, picked up by the single re-run
+    const d = allocatePass();
+    expect(d).not.toBe(a);
+    await d;
   });
 
   it('shares an allowance check that is already running', async () => {
