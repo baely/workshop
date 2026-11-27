@@ -27,19 +27,21 @@ import {
   linkRef,
   markRunning,
   MAX_ATTEMPTS,
+  raisedOf,
   repoRef,
   rescueOf,
   reworkOf,
   setBlockers,
   sourceFor,
   vcsFor,
+  type Raised,
   type RepoRow,
   type TicketRow,
 } from '../tickets.ts';
 import { imageFor, label, moveTo, parseLabels, REPO_IMAGE_DIR, repoImageTag } from '../workflow/labels.ts';
 import { MAX_TICKET, replaceImageLinks, screenshotsLine } from '../workflow/media.ts';
 import { AGENT_INFO, capabilitiesOf, ENVIRONMENT_LABEL, environmentText, protocolText, publishes, taskPrompt } from '../workflow/prompts.ts';
-import { parseResult, schemaFor, type AgentResult, type Handoff, type Rescue, type WorkResult } from '../workflow/schemas.ts';
+import { MAX_NOTICED, parseResult, schemaFor, type AgentResult, type Handoff, type Rescue, type WorkResult } from '../workflow/schemas.ts';
 import { planTransition, type Plan } from '../workflow/transitions.ts';
 import { check } from '../http/util.ts';
 import { ALLOWANCE_MAX_AGE_MS, formatTime, isRateLimited, isTransient, joinRefs, PUBLISH_GIVE_UP_MS, publishRetryMinutes, thresholdBlock } from './gates.ts';
@@ -231,7 +233,7 @@ async function runSpec(ctx: Ctx, agent: AgentRow) {
     MAX_BUDGET_USD: r.billing === 'api' ? String(getSettings().apiRunCapUsd) : '',
     RESUME: r.resumes > 0 ? '1' : '',
   };
-  const files: Record<string, string | Buffer> = { '.workshop/': '', '.workshop/schema.json': JSON.stringify(schemaFor(r.agent)) };
+  const files: Record<string, string | Buffer> = { '.workshop/': '', '.workshop/schema.json': JSON.stringify(schemaFor(r.agent, { noticed: mayRaise(ctx.repo, ctx.ticket, r.agent) })) };
   if (r.resumes === 0) {
     const t = ctx.ticket;
     const repo = repoRef(ctx.repo);
@@ -264,7 +266,7 @@ async function runSpec(ctx: Ctx, agent: AgentRow) {
         : undefined;
     const imageLabels: Record<string, string> = await ctx.env.imageLabels(ctx.image).catch(() => ({}));
     const environment = environmentText(capabilitiesOf(imageLabels), imageLabels[ENVIRONMENT_LABEL]);
-    files['.workshop/system.md'] = `${promptFor(agent)}\n\n${protocolText({ branch, base: ctx.repo.default_branch, publishes: publishes(r.agent) })}\n\n${environment}`;
+    files['.workshop/system.md'] = `${promptFor(agent)}\n\n${protocolText({ branch, base: ctx.repo.default_branch, publishes: publishes(r.agent), noticed: mayRaise(ctx.repo, t, r.agent) })}\n\n${environment}`;
     files['.workshop/prompt.md'] = taskPrompt({
       agent: r.agent,
       mode: r.mode,
@@ -575,6 +577,41 @@ interface PublishState {
   done: string[];
 }
 
+/**
+ * Whether this run may report work outside its ticket. Not the Classifier, which only sizes; and not on a ticket
+ * that was itself opened this way, so noticed work can't keep spawning more.
+ */
+const mayRaise = (repo: RepoRow, t: TicketRow, agent: AgentName) => Boolean(repo.raise_tickets) && agent !== 'classifier' && !labelsOf(t).includes(label.raised);
+
+const sameTitle = (a: string, b: string) => a.trim().replace(/\s+/g, ' ').toLowerCase() === b.trim().replace(/\s+/g, ' ').toLowerCase();
+const MAX_RAISED_TITLE = 200;
+const MAX_RAISED_BODY = 20_000;
+
+/**
+ * Opens a ticket for each thing the agent noticed outside its ticket, and returns the ones this run opened.
+ * Each is recorded as soon as it exists, so a publish retried after a GitHub failure doesn't open it twice; one
+ * whose title an open ticket (or an earlier run on this ticket) already has is left out.
+ */
+async function raiseNoticed(ctx: Ctx, t: TicketRow, result: AgentResult): Promise<Raised[]> {
+  const r = ctx.run;
+  const noticed = (result as WorkResult).noticed ?? [];
+  if (!noticed.length || !mayRaise(ctx.repo, t, r.agent)) return [];
+  const source = sourceFor(ctx.repo);
+  for (const n of noticed.slice(0, MAX_NOTICED)) {
+    const title = n.title.trim().replace(/\s+/g, ' ').slice(0, MAX_RAISED_TITLE);
+    const before = raisedOf(getTicket(t.id)!);
+    const open = all<{ title: string }>("SELECT title FROM tickets WHERE repo_id = ? AND state = 'open'", t.repo_id);
+    if ([...before, ...open].some((x) => sameTitle(x.title, title))) continue;
+    const body = `${n.body.trim().slice(0, MAX_RAISED_BODY)}\n\n---\n_Workshop's ${AGENT_INFO[r.agent].label} agent noticed this while working on #${t.number}. It's outside that ticket, so nothing was changed for it there._`;
+    const made = await source.createTicket(repoRef(ctx.repo), { title, body, labels: [label.raised] });
+    run('UPDATE tickets SET raised = ? WHERE id = ?', JSON.stringify([...before, { number: made.number, url: made.url, title, runId: r.id }]), t.id);
+  }
+  return raisedOf(getTicket(t.id)!).filter((x) => x.runId === r.id);
+}
+
+const raisedLine = (raised: Raised[]) =>
+  raised.length ? `Noticed outside this ticket, and opened as ${raised.length === 1 ? 'its own ticket' : 'their own tickets'}:\n${raised.map((x) => `- #${x.number} ${x.title}`).join('\n')}` : '';
+
 async function publishRun(ctx: Ctx) {
   const r = ctx.run;
   const t = getTicket(r.ticket_id)!;
@@ -727,8 +764,9 @@ async function publishRun(ctx: Ctx) {
   if (plan.rework) run('UPDATE tickets SET rework = ? WHERE id = ?', JSON.stringify(plan.rework), t.id);
   if (plan.deleteBranch) await vcs.deleteBranch(repo, plan.deleteBranch).catch((err) => warn(r.id, `Workshop couldn't delete ${plan.deleteBranch}: ${(err as Error).message}`));
   if (plan.clearRescue) run('UPDATE tickets SET rescue = NULL WHERE id = ?', t.id);
+  const raised = await raiseNoticed(ctx, t, result);
   await step('labels', () => editLabels(t, plan.add, [...plan.remove, label.running]));
-  const comment = plan.comment;
+  const comment = [plan.comment, raisedLine(raised)].filter(Boolean).join('\n\n');
   if (comment) await step('comment', () => sourceFor(ctx.repo).comment(repo, t.number, comment));
   // The handoff goes last too, so a retry after a partial failure still has the Implementation summary.
   run(`UPDATE tickets SET failures = 0${plan.rework === null ? ', rework = NULL' : ''}${plan.openPr ? ', handoff = NULL' : ''} WHERE id = ?`, t.id);
