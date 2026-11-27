@@ -332,12 +332,13 @@ async function checkMergeRules(repo: RepoRow): Promise<{ error: string } | { war
 connectionsRouter.put('/repos/:id', async (req, res) => {
   const repo = one<RepoRow>('SELECT * FROM repos WHERE id = ?', Number(req.params.id));
   check(repo, 'Repository not found.', 404);
-  const { enabled, image, priority, selection, mergeWithoutReview, pushToDefault } = req.body ?? {};
+  const { enabled, image, priority, selection, mergeWithoutReview, raiseTickets, pushToDefault } = req.body ?? {};
   // Check every field before writing any, so a rejected one doesn't leave the others half saved.
   if (selection !== undefined) check(selection === 'all' || selection === 'nominated', 'Choose "all" or "nominated".');
   if (image !== undefined) check(image === null || image === '' || (typeof image === 'string' && /^[\w.\-/:@]+$/.test(image)), 'The image must be a Docker image reference.');
   const newPriority = priority === undefined ? undefined : int(priority, 'Priority', -100, 100);
   if (mergeWithoutReview !== undefined) check(typeof mergeWithoutReview === 'boolean', 'Say whether to merge without review.');
+  if (raiseTickets !== undefined) check(typeof raiseTickets === 'boolean', 'Say whether agents may open tickets.');
   if (pushToDefault !== undefined) check(typeof pushToDefault === 'boolean', 'Say whether to push to the default branch.');
   let mergeWarning: string | null = null;
   if (mergeWithoutReview === true) {
@@ -360,6 +361,11 @@ connectionsRouter.put('/repos/:id', async (req, res) => {
     syncSoon(); // pull requests waiting for review move on at the next sync
   } else if (mergeWithoutReview === false) {
     run('UPDATE repos SET merge_without_review = 0, merge_warning = NULL WHERE id = ?', repo.id);
+  }
+  if (raiseTickets !== undefined) {
+    // Repositories turned on before agents could open tickets don't have the label yet.
+    if (raiseTickets && repo.enabled && enabled !== false) await sourceFor(repo).ensureLabels(repoRef(repo), LABEL_DEFS);
+    run('UPDATE repos SET raise_tickets = ? WHERE id = ?', Number(raiseTickets), repo.id);
   }
   if (pushToDefault !== undefined) {
     run('UPDATE repos SET push_to_default = ? WHERE id = ?', Number(pushToDefault), repo.id);

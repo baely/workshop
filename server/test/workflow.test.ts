@@ -607,6 +607,12 @@ describe('code review', () => {
   it('requires findings in the schema given to Claude', () => {
     expect(schemaFor('code-review')).toMatchObject({ required: ['outcome', 'summary', 'findings'] });
     expect(schemaFor('implement')).toMatchObject({ required: ['outcome', 'summary'] });
+    expect(schemaFor('implement')).not.toHaveProperty('properties.noticed');
+    expect(schemaFor('implement', { noticed: true })).toHaveProperty('properties.noticed.items.required', ['title', 'body']);
+    expect(schemaFor('code-review', { noticed: true })).toHaveProperty('properties.findings');
+    expect(schemaFor('classifier', { noticed: true })).not.toHaveProperty('properties.noticed');
+    expect(parseResult('implement', { outcome: 'done', summary: 's', noticed: [{ title: 't', body: 'b' }] })).toMatchObject({ noticed: [{ title: 't' }] });
+    expect(parseResult('implement', { outcome: 'done', summary: 's', noticed: [{ title: 't' }] })).toBe('noticed must be a list of { title, body }.');
   });
 
   describe('parseResult', () => {
