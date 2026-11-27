@@ -194,7 +194,7 @@ const schemas: Record<string, Schema> = {
     },
     [],
   ),
-  HostView: object({ id: int, name: str, status: enumOf('ok', 'error', 'unknown'), available: bool, slots: int, busy: int, specs: nullable(str) }),
+  HostView: object({ id: int, name: str, status: enumOf('ok', 'error', 'unknown'), available: bool, slots: int, busy: int, pools: nullable(array(object({ size: enumOf('small', 'standard', 'large'), slots: int, busy: int }))), specs: nullable(str) }),
   QueueItem: object({ ticketId: int, ticket: str, title: str, next: str, blockedBy: nullable(str), push: nullable(enumOf('stage', 'lifecycle')), prioritised: bool, bypassLimits: bool }),
   AlertView: object({
     id: int,

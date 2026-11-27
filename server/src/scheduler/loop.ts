@@ -1,21 +1,22 @@
 import { getAgent } from '../agents.ts';
 import { clearAlert, raiseAlert } from '../alerts.ts';
 import { allowanceOf, allowanceViews, apiSpendSince, recordProbe } from '../allowance.ts';
-import type { AgentName, Billing, HostView, QueueItem, Settings, TicketOrder } from '../api-types.ts';
+import { AGENT_SIZES, type AgentName, type AgentSize, type Billing, type HostView, type QueueItem, type Settings, type TicketOrder } from '../api-types.ts';
 import { config } from '../config.ts';
 import { all, run } from '../db.ts';
 import { sweepMedia } from '../media.ts';
 import { publish } from '../events.ts';
 import { readClaudeLine, type ClaudeRun } from '../providers/anthropic/index.ts';
+import { slotsBySize, type DockerConfig } from '../providers/docker/index.ts';
 import { environmentOf, getConnection, listConnections, modelsOf, setConnectionStatus } from '../providers/index.ts';
 import { appendLog, deleteLog, getRun, RUNNING_SQL, type RunRow } from '../runs.ts';
 import { check } from '../http/util.ts';
 import { sweepExpiredTokens } from '../http/tokens.ts';
 import { getSettings } from '../settings.ts';
 import { activeRunId, blockersOf, vcsFor, getRepo, getTicket, isAllowedAuthor, labelsOf, openTicketsSql, setBypassLimits, setPrioritised, setPush, ticketInScope, type RepoRow, type TicketRow } from '../tickets.ts';
-import { nextStep, parseLabels } from '../workflow/labels.ts';
+import { agentSize, nextStep, parseLabels } from '../workflow/labels.ts';
 import { AGENT_INFO } from '../workflow/prompts.ts';
-import { allowanceBlock, apiCapBlock, formatTime, pickSubscription, clockTopics, dependencyBlock, inScope, isUnclassified, localTime, modeBlock, pickHost, priorityBlock, pushEnded, startOfDay, stepPriority, withinHours, type ClockState, type HostLoad } from './gates.ts';
+import { allowanceBlock, apiCapBlock, formatTime, pickSubscription, clockTopics, dependencyBlock, freeSlots, inScope, isUnclassified, localTime, modeBlock, pickHost, poolFor, priorityBlock, pushEnded, startOfDay, stepPriority, withinHours, type ClockState, type HostLoad } from './gates.ts';
 import { advanceMerge } from './merge.ts';
 import { abortRun, cancelPause, drive, isDriving, launch, onRunSettled, resume, switchConnection } from './runner.ts';
 import { syncRepo } from './sync.ts';
@@ -118,18 +119,37 @@ export async function tick() {
 }
 
 export function hostLoads(): (HostLoad & { name: string; specs: string | null })[] {
-  const busy = new Map(
-    all<{ environment_id: number; n: number }>(`SELECT environment_id, COUNT(*) AS n FROM runs WHERE ${RUNNING_SQL} AND publish_retry_at IS NULL GROUP BY environment_id`).map((r) => [r.environment_id, r.n]),
+  const running = all<{ environment_id: number; size: AgentSize | null; n: number }>(
+    `SELECT environment_id, size, COUNT(*) AS n FROM runs WHERE ${RUNNING_SQL} AND publish_retry_at IS NULL GROUP BY environment_id, size`,
   );
   return listConnections('environment').map((c) => {
-    const cfg = c.config as { slots?: number; specs?: string; available?: boolean };
-    return { id: c.id, name: c.name, healthy: c.status === 'ok', available: cfg.available !== false, slots: Number(cfg.slots ?? 1), busy: busy.get(c.id) ?? 0, specs: cfg.specs ?? null };
+    const cfg = c.config as Partial<DockerConfig> & { specs?: string; available?: boolean };
+    const slots = slotsBySize(cfg);
+    const pools: HostLoad['pools'] = { standard: { slots: slots.standard, busy: 0 } };
+    if (slots.small) pools.small = { slots: slots.small, busy: 0 };
+    if (slots.large) pools.large = { slots: slots.large, busy: 0 };
+    const host = { id: c.id, name: c.name, healthy: c.status === 'ok', available: cfg.available !== false, pools, specs: cfg.specs ?? null };
+    // A run whose size has no slots of its own here (any more) holds a standard one.
+    for (const r of running) if (r.environment_id === c.id) poolFor(host, r.size ?? 'standard').busy += r.n;
+    return host;
   });
 }
 
 export function hostViews(): HostView[] {
   const status = new Map(listConnections('environment').map((c) => [c.id, c.status]));
-  return hostLoads().map((h) => ({ id: h.id, name: h.name, status: status.get(h.id)!, available: h.available, slots: h.slots, busy: h.busy, specs: h.specs }));
+  return hostLoads().map((h) => {
+    const pools = AGENT_SIZES.flatMap((size) => (h.pools[size] ? [{ size, ...h.pools[size] }] : []));
+    return {
+      id: h.id,
+      name: h.name,
+      status: status.get(h.id)!,
+      available: h.available,
+      slots: pools.reduce((n, p) => n + p.slots, 0),
+      busy: pools.reduce((n, p) => n + p.busy, 0),
+      pools: pools.length > 1 ? pools : null,
+      specs: h.specs,
+    };
+  });
 }
 
 async function checkHosts() {
@@ -253,8 +273,9 @@ export function resumePaused(s: Settings, now: number) {
     }
     // The session and workspace live on the run's volume, so it resumes on the same host.
     const host = hosts.find((h) => h.id === r.environment_id);
-    if (!host?.healthy || host.busy >= host.slots) continue;
-    host.busy++;
+    const size = r.size ?? 'standard';
+    if (!host?.healthy || freeSlots(host, size) <= 0) continue;
+    poolFor(host, size).busy++;
     resume(r.id);
   }
 }
@@ -266,6 +287,7 @@ export interface Candidate {
   mode: 'normal' | 'delta';
   blockedBy: string | null;
   hostId: number | null;
+  size: AgentSize;
   modelConnectionId: number | null;
   model: string | null;
   billing: Billing;
@@ -281,6 +303,7 @@ function startCandidate(c: Candidate): string | null {
     mode: c.mode,
     attempt: c.ticket.failures + 1,
     environmentId: c.hostId!,
+    size: c.size,
     modelConnectionId: c.modelConnectionId!,
     model: c.model!,
     billing: c.billing,
@@ -317,7 +340,7 @@ export function resumeNow(runId: string) {
   const name = host?.name ?? getConnection(r.environment_id)?.name ?? 'The agent host';
   check(host, 'The agent host for this run was removed, so it can only be stopped.', 409);
   check(host.healthy, `${name} is offline. Resume this run when it's back.`, 409);
-  check(host.busy < host.slots, `${name} has no free agent slot. Pause or stop another agent there, or resume this one when a slot frees up.`, 409);
+  check(freeSlots(host, r.size ?? 'standard') > 0, `${name} has no free agent slot. Pause or stop another agent there, or resume this one when a slot frees up.`, 409);
   const s = getSettings();
   const now = Date.now();
   if (onPausedSubscription(r)) {
@@ -356,7 +379,7 @@ const vcsConn = (r: RepoRow) => {
 /** Every ticket Workshop could work on next, in order, each with the reason it's waiting (if any). */
 export function buildQueue(s: Settings = getSettings(), now = Date.now(), opts: { ignoreMode?: boolean } = {}): Candidate[] {
   const hosts = hostLoads();
-  const hostId = pickHost(hosts);
+  const hostFor = new Map(AGENT_SIZES.map((size) => [size, pickHost(hosts, size)]));
   const modeReason = opts.ignoreMode ? null : modeBlock(s, new Date(now));
   const spentToday = apiSpendSince(startOfDay(now, s.timezone));
   const repos = new Map(all<RepoRow>('SELECT * FROM repos').map((r) => [r.id, r]));
@@ -404,8 +427,10 @@ export function buildQueue(s: Settings = getSettings(), now = Date.now(), opts: 
       } else if (subs.some((c) => c.provider === conn!.provider)) blockedBy = `No Claude subscription that isn't paused offers ${cls.model}. Resume one on the Connections page`;
       else blockedBy = 'Every Claude subscription is paused. Resume one on the Connections page';
     }
+    const size = agentSize(agent, parseLabels(labelsOf(t)), Boolean(t.ui));
+    const hostId = hostFor.get(size)!;
     if (!blockedBy && hostId === null) blockedBy = hosts.length ? 'Every agent host is busy or offline' : 'No agent hosts connected';
-    out.push({ ticket: t, repo, agent, mode, blockedBy, hostId, modelConnectionId: useConnection?.id ?? null, model: cls.model, billing: cls.billing, pushed: Boolean(t.push), prioritised: Boolean(t.prioritised), bypassLimits: Boolean(t.bypass_limits), priority: stepPriority(step), repoPriority: repo.priority });
+    out.push({ ticket: t, repo, agent, mode, blockedBy, hostId, size, modelConnectionId: useConnection?.id ?? null, model: cls.model, billing: cls.billing, pushed: Boolean(t.push), prioritised: Boolean(t.prioritised), bypassLimits: Boolean(t.bypass_limits), priority: stepPriority(step), repoPriority: repo.priority });
   }
   // The sort is stable, so the ticket order setting (from the query) decides ties.
   return out.sort((a, b) => Number(b.pushed) - Number(a.pushed) || Number(b.prioritised) - Number(a.prioritised) || b.repoPriority - a.repoPriority || a.priority - b.priority);

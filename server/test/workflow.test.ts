@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addNeeds, applyEdits, branchFor, describeStep, labelDiff, imageFor, label, nextStep, parseLabels, stageAfterClassify, stateEdits } from '../src/workflow/labels.ts';
+import { addNeeds, agentSize, applyEdits, branchFor, describeStep, labelDiff, imageFor, label, nextStep, parseLabels, stageAfterClassify, stateEdits } from '../src/workflow/labels.ts';
 import { parseResult, schemaFor, type Finding, type Rescue } from '../src/workflow/schemas.ts';
 import { MAX_FINDINGS_SHOWN, MAX_REWORKS, planTransition, reviewSection, stageForRework, type PlanContext } from '../src/workflow/transitions.ts';
 import { capabilitiesOf, DEFAULT_PROMPTS, environmentText, protocolText, taskPrompt } from '../src/workflow/prompts.ts';
@@ -290,6 +290,25 @@ describe('media and ui results', () => {
       expect(imageFor(agent, plain, { ...images, repo: 'mine' }, true)).toBe('mine');
     }
     expect(imageFor('classifier', plain, images, true)).toBe('base');
+  });
+
+  it('sizes the container by the agent and the ticket', () => {
+    const plain = parseLabels([label.size('m')]);
+    const xl = parseLabels([label.size('xl')]);
+    const browser = parseLabels([label.size('s'), label.needs('browser')]);
+    expect(agentSize('classifier', xl, true)).toBe('small');
+    for (const agent of ['design', 'design-review', 'implement', 'code-review', 'merge'] as const) expect(agentSize(agent, plain)).toBe('standard');
+    // Whoever drives a browser is large: the same agents that get the browser image.
+    expect(agentSize('implement', browser)).toBe('large');
+    expect(agentSize('code-review', browser)).toBe('large');
+    expect(agentSize('design', browser)).toBe('standard');
+    expect(agentSize('design', plain, true)).toBe('large');
+    expect(agentSize('design-review', plain, true)).toBe('large');
+    // On an XL ticket, the agents that build and run the code are large.
+    expect(agentSize('implement', xl)).toBe('large');
+    expect(agentSize('code-review', xl)).toBe('large');
+    expect(agentSize('design', xl)).toBe('standard');
+    expect(agentSize('merge', xl)).toBe('standard');
   });
 });
 

@@ -273,6 +273,7 @@ export const MIGRATIONS = [
   `
   ALTER TABLE repos ADD COLUMN push_to_default INTEGER NOT NULL DEFAULT 0;
   `,
+  `ALTER TABLE runs ADD COLUMN size TEXT; -- small, standard or large: the container size it started with; null on older rows means standard`,
 ];
 
 export let db: DatabaseSync;
