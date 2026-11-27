@@ -4,25 +4,34 @@ import '@fontsource/ibm-plex-mono/400.css';
 import './theme.css';
 import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router';
 import type { AuthState } from '../../server/src/api-types.ts';
 import { api } from './api.ts';
 import { Layout } from './components/Layout.tsx';
 import { applyStoredTheme } from './components/ThemeToggle.tsx';
-import { Agents } from './pages/Agents.tsx';
 import { Alerts } from './pages/Alerts.tsx';
-import { Connections } from './pages/Connections.tsx';
 import { Dashboard } from './pages/Dashboard.tsx';
 import { Login } from './pages/Login.tsx';
 import { Media } from './pages/Media.tsx';
 import { Ticket } from './pages/Ticket.tsx';
 import { RunView } from './pages/RunView.tsx';
 import { Runs } from './pages/Runs.tsx';
-import { SettingsPage } from './pages/Settings.tsx';
+import { Agents } from './pages/settings/Agents.tsx';
+import { Connections } from './pages/settings/Connections.tsx';
+import { General, Limits } from './pages/settings/General.tsx';
+import { SettingsLayout } from './pages/settings/index.tsx';
+import { Repositories } from './pages/settings/Repositories.tsx';
+import { Tokens } from './pages/settings/Tokens.tsx';
 import { Tickets } from './pages/Tickets.tsx';
 import { Usage } from './pages/Usage.tsx';
 
 applyStoredTheme();
+
+/** Old addresses (and GitHub's return from setting up the App) land on the settings tab that replaced them. */
+function Moved({ to }: { to: string }) {
+  const { search } = useLocation();
+  return <Navigate to={to + search} replace />;
+}
 
 function App() {
   const [auth, setAuth] = useState<AuthState | null>(null);
@@ -47,9 +56,16 @@ function App() {
           <Route path="runs" element={<Runs />} />
           <Route path="runs/:id" element={<RunView />} />
           <Route path="usage" element={<Usage />} />
-          <Route path="connections" element={<Connections />} />
-          <Route path="agents" element={<Agents />} />
-          <Route path="settings" element={<SettingsPage />} />
+          <Route path="settings" element={<SettingsLayout />}>
+            <Route index element={<General />} />
+            <Route path="repositories" element={<Repositories />} />
+            <Route path="agents" element={<Agents />} />
+            <Route path="connections" element={<Connections />} />
+            <Route path="limits" element={<Limits />} />
+            <Route path="tokens" element={<Tokens />} />
+          </Route>
+          <Route path="connections" element={<Moved to="/settings/connections" />} />
+          <Route path="agents" element={<Moved to="/settings/agents" />} />
           <Route path="alerts" element={<Alerts />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

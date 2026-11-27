@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { IconButton } from './ui.tsx';
 
 type Theme = 'system' | 'light' | 'dark';
 const NEXT: Record<Theme, Theme> = { system: 'light', light: 'dark', dark: 'system' };
@@ -31,9 +32,5 @@ export function ThemeToggle() {
       // Private mode: the choice lasts for this page only.
     }
   };
-  return (
-    <button className="link small" onClick={toggle}>
-      {LABEL[theme]}
-    </button>
-  );
+  return <IconButton icon={theme === 'system' ? 'auto' : theme === 'light' ? 'sun' : 'moon'} label={`${LABEL[theme]}. Change`} onClick={toggle} />;
 }

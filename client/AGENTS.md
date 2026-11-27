@@ -14,8 +14,9 @@ The Workshop UI: React 19, React Router 8, Vite. Plain CSS with custom propertie
 | `src/access.ts` | Pure: API token lifetimes and the brief the run view's Give Claude access button shows. Tested in `test/` |
 | `src/chart.ts`, `src/projections.ts` | Pure: chart ticks, series folding, the Usage page's URL filters, and its projection sentences. Tested in `test/` |
 | `src/markdown.ts` | Pure parser: the Markdown subset agents write → block and inline tree. Tested in `test/` |
-| `src/components/` | `Markdown` (renders that tree as React elements, never raw HTML), `Layout` (sidebar, mode switch, allowance meters), `ui.tsx` (`Status`, `Meter`, `Modal`, `Panel`, `ErrorNote`), `ThemeToggle`, `Chart` (hand-drawn SVG stacked columns and line chart, with legend and tooltips) |
-| `src/pages/` | Login, Dashboard, Tickets, Runs, RunView, Usage (charts, projections and lifetime tables), Connections, Agents, Settings, Alerts, Ticket (a ticket's lifecycle, `tickets/:id`), Media (a ticket's screenshots, `tickets/:id/media`) |
+| `src/components/` | `Layout` (icon sidebar; top bar with the mode switch, allowance meters and the alerts bell), `ui.tsx` (`Status`, `Tag`, `Meter`, `Modal`, `Panel`, `PageHead`, `Stat`, `Tabs`, `Segmented`, `Switch`, `Field`, `Hint`, `Menu`, `useAction`), `Icon` (line icons), `Markdown` (renders that tree as React elements, never raw HTML), `ThemeToggle`, `Chart` (hand-drawn SVG stacked columns and line chart, with legend and tooltips) |
+| `src/pages/` | Login; Home (`Dashboard.tsx`: what's running, what needs you, what's next, host capacity, open alerts); Tickets (the board) and Ticket (its timeline and screenshots, `tickets/:id` and `tickets/:id/media`); Runs and RunView; Usage; Alerts |
+| `src/pages/settings/` | Everything you configure, one tab each under `/settings`: General (schedule, tickets), Repositories, Agents, Connections, Limits, API tokens. `/connections` and `/agents` redirect here |
 | `src/theme.css` | Every colour, size and component style |
 
 ## Data flow
@@ -35,9 +36,10 @@ The brief: subtle and plain, **neutral greys with one blue accent**. No textures
   - **Every text pair must meet WCAG AA in both themes.** Check the contrast when adding a token.
 - **Status colours** (`--ok`, `--attention`, `--error`) are muted and used for dots and fills, always with words next to them (`<Status tone>`). For text use `--error-text`: plain `--error` is too dim for text on dark surfaces.
 - **Type:** IBM Plex Sans everywhere, IBM Plex Mono only for logs, code, commands and IDs. Sentence case, no all-caps labels.
-- **Layout:** bordered panels and compact lists or tables, not grids of identical cards. Radius 4px on controls and 6px on panels; shadows only on modals.
+- **Layout:** bordered panels and compact lists or tables. Radius 6px on controls and 10px on panels; shadows only on modals and popovers.
+- **Few words on screen.** A row shows what it is and its state; explanations go behind `Hint` (or a `title`), and a row's secondary actions go in a `Menu`. One screen per subject: a setting lives under Settings, not on the page it affects.
 - **Motion:** only the running indicator's slow pulse. `prefers-reduced-motion` turns it off.
-- **Phones:** the sidebar becomes a bottom bar under 760px. Content must wrap, never scroll sideways (tables sit in `.table-wrap`).
+- **Phones:** the sidebar becomes a bottom bar of icons under 760px. Content must wrap, never scroll sideways (tables sit in `.table-wrap`).
 
 ## Copy
 

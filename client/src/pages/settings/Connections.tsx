@@ -1,15 +1,15 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
-import type { ConnectionKind, ConnectionView, FieldDef, Installation, ProviderInfo, RepoView, TestResult } from '../../../server/src/api-types.ts';
-import { api, useApi } from '../api.ts';
-import { ErrorNote, Modal, Panel, Status } from '../components/ui.tsx';
-import { repoChanges, type RepoDraft } from '../repo-settings.ts';
+import type { ConnectionKind, ConnectionView, FieldDef, Installation, ProviderInfo, TestResult } from '../../../../server/src/api-types.ts';
+import { api, useApi } from '../../api.ts';
+import { Icon } from '../../components/Icon.tsx';
+import { Empty, ErrorNote, Field, Hint, Menu, Modal, Panel, Status, Tag } from '../../components/ui.tsx';
 
 const SECTIONS: { kind: ConnectionKind; title: string; blurb: string }[] = [
-  { kind: 'vcs', title: 'Code host', blurb: 'Where your code lives. Workshop acts through its own GitHub App.' },
-  { kind: 'tickets', title: 'Tickets', blurb: 'Where Workshop finds work to do.' },
+  { kind: 'vcs', title: 'GitHub', blurb: 'Where your code lives. Workshop acts through its own GitHub App, or as you with a personal access token.' },
+  { kind: 'tickets', title: 'Ticket sources', blurb: 'Where Workshop finds work to do.' },
   { kind: 'environment', title: 'Agent hosts', blurb: 'Machines with Docker where agent containers run.' },
-  { kind: 'model', title: 'AI models', blurb: 'Claude, through your subscription, an API key, or both. Subscription agents use the first subscription in this list that isn\'t paused or over your limits, moving down the list when it is.' },
+  { kind: 'model', title: 'Claude', blurb: 'Through your subscription, an API key, or both. Subscription agents use the first subscription in this list that isn\'t paused or over your limits, moving down the list when it is.' },
 ];
 
 const BANNERS: Record<string, { tone: string; text: string }> = {
@@ -64,11 +64,9 @@ function FieldInput(props: { field: FieldDef; value: unknown; saved?: string; co
       input = <input {...common} type={field.type === 'password' ? 'password' : 'text'} autoComplete="off" onChange={(e) => onChange(e.target.value)} />;
   }
   return (
-    <label className="field">
-      <span>{field.label}</span>
+    <Field label={field.label} hint={field.help}>
       {input}
-      {field.help && <span className="help">{field.help}</span>}
-    </label>
+    </Field>
   );
 }
 
@@ -109,12 +107,12 @@ function ConnectionModal(props: { provider: ProviderInfo; connection?: Connectio
 
   return (
     <Modal title={connection ? `Edit ${connection.name}` : `Add ${provider.name}`} onClose={onClose}>
-      <p className="muted">{provider.description}</p>
+      <p className="small muted">{provider.description}</p>
       <form className="stack" onSubmit={save}>
-        <label className="field">
-          <span>Name</span>
+        <Field label="Name">
           <input value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
-        </label>
+        </Field>
+        <div className="fields">
         {provider.fields
           .filter((f) => visible(f, values))
           .map((f) => (
@@ -127,6 +125,7 @@ function ConnectionModal(props: { provider: ProviderInfo; connection?: Connectio
               onChange={(v) => setValues({ ...values, [f.key]: v })}
             />
           ))}
+        </div>
         <ErrorNote error={error} />
         {result && <p className={`notice ${result.ok ? 'ok' : 'error'}`}>{result.ok ? result.message : `Saved, but the check failed: ${result.message}`}</p>}
         <div className="row">
@@ -153,11 +152,11 @@ function Installations({ connection }: { connection: ConnectionView }) {
   };
   const install = () => api<{ url: string }>(`/github/${connection.id}/install`).then(({ url }) => window.location.assign(url), (e: Error) => setActionError(e.message));
   return (
-    <div className="stack small" style={{ gap: 8 }}>
-      <strong>Installations</strong>
+    <div className="stack tight small">
+      <span className="muted">Installations</span>
       {data && !data.length && <span className="muted">Not installed anywhere yet.</span>}
       {data?.map((i) => (
-        <label key={i.id} className="row">
+        <label key={i.id} className="check">
           <input type="checkbox" checked={i.approved} onChange={(e) => toggle(i.id, e.target.checked)} />
           <span>
             {i.account} <span className="muted">({i.repositorySelection === 'all' ? 'all repositories' : 'selected repositories'})</span>
@@ -166,7 +165,10 @@ function Installations({ connection }: { connection: ConnectionView }) {
       ))}
       <ErrorNote error={error ?? actionError} />
       <div>
-        <button onClick={install}>Install on an account or organisation</button>
+        <button onClick={install}>
+          <Icon name="plus" />
+          Install on an account
+        </button>
       </div>
     </div>
   );
@@ -208,55 +210,63 @@ function ConnectionItem(props: { c: ConnectionView; provider: ProviderInfo; onEd
   const labelOf = (key: string) => provider.fields.find((f) => f.key === key)?.label ?? key;
   const saved = Object.entries(c.secrets).map(([key, hint]) => `${labelOf(key)} ${hint}`);
   const credentials = saved.length ? `Saved: ${saved.join(', ')}` : null;
+  const fail = (e: Error) => setTest({ ok: false, message: e.message });
   return (
-    <li className="stack" style={{ gap: 8 }}>
+    <li className="item column">
       <div className="spread">
-        <strong>
-          {rank !== undefined && <span className="muted">{rank + 1}. </span>}
-          {c.name}
-        </strong>
-        <Status tone={c.status === 'ok' ? 'ok' : c.status === 'error' ? 'error' : 'idle'}>{c.status === 'ok' ? 'Working' : c.status === 'error' ? 'Not working' : 'Not checked yet'}</Status>
+        <div className="row">
+          <strong>
+            {rank !== undefined && <span className="muted">{rank + 1}. </span>}
+            {c.name}
+          </strong>
+          <Status tone={c.status === 'ok' ? 'ok' : c.status === 'error' ? 'error' : 'idle'}>{c.status === 'ok' ? 'Working' : c.status === 'error' ? 'Not working' : 'Not checked yet'}</Status>
+          {isHost && !available && <Tag title="No new agents start here. Running agents carry on.">Switched off</Tag>}
+          {c.kind === 'model' && c.paused && (
+            <Tag title="Subscription agents use your other subscriptions, and running ones move over after their current step. API-billed agents still use its API key.">Paused</Tag>
+          )}
+        </div>
+        <div className="row">
+          <button onClick={check} disabled={busy}>
+            {busy ? 'Checking…' : 'Check'}
+          </button>
+          <button onClick={onEdit}>Edit</button>
+          <Menu
+            label={`More for ${c.name}`}
+            items={[
+              isHost && { label: available ? 'Switch off' : 'Switch on', icon: available ? 'pause' : 'play', onClick: toggle, disabled: toggling },
+              canPause && { label: c.paused ? 'Resume' : 'Pause', icon: c.paused ? 'play' : 'pause', onClick: pause, disabled: toggling },
+              onMove && rank !== 0 && { label: 'Move up', icon: 'up', onClick: () => void onMove(-1).catch(fail) },
+              onMove && !last && { label: 'Move down', icon: 'down', onClick: () => void onMove(1).catch(fail) },
+              { label: 'Remove', icon: 'x', danger: true, onClick: remove },
+            ]}
+          />
+        </div>
       </div>
-      {isHost && !available && <span className="small muted">Switched off: no new agents start here. Running agents carry on.</span>}
-      {c.kind === 'model' && c.paused && (
-        <span className="small muted">Paused: subscription agents use your other subscriptions, and running ones move over after their current step. API-billed agents still use its API key. Its settings are kept.</span>
-      )}
-      {specs && <span className="small muted">{specs}</span>}
-      {credentials && <span className="small muted">{credentials}</span>}
+      {(specs || credentials) && <span className="small muted">{[specs, credentials].filter(Boolean).join(' · ')}</span>}
+      {isHost && <HostSlots config={c.config} />}
       {c.status === 'error' && c.error && <span className="small error-text">{c.error}</span>}
       {test && <span className={`small ${test.ok ? '' : 'error-text'}`}>{test.message}</span>}
       {extra}
-      <div className="row">
-        <button onClick={check} disabled={busy}>
-          {busy ? 'Checking…' : 'Check connection'}
-        </button>
-        {isHost && (
-          <button onClick={toggle} disabled={toggling}>
-            {available ? 'Switch off' : 'Switch on'}
-          </button>
-        )}
-        {canPause && (
-          <button onClick={pause} disabled={toggling}>
-            {c.paused ? 'Resume' : 'Pause'}
-          </button>
-        )}
-        {onMove && (
-          <>
-            <button onClick={() => onMove(-1).catch((e: Error) => setTest({ ok: false, message: e.message }))} disabled={rank === 0}>
-              Move up
-            </button>
-            <button onClick={() => onMove(1).catch((e: Error) => setTest({ ok: false, message: e.message }))} disabled={last}>
-              Move down
-            </button>
-          </>
-        )}
-        <button onClick={onEdit}>Edit</button>
-        <button className="danger" onClick={remove}>
-          Remove
-        </button>
-      </div>
     </li>
   );
+}
+
+/** A host's slots and limits by agent size, as small labels. */
+function HostSlots({ config }: { config: Record<string, unknown> }) {
+  const n = (key: string) => Number(config[key]) || 0;
+  const size = (name: string, prefix: string) => {
+    const slots = n(prefix ? `${prefix}Slots` : 'slots');
+    if (!slots) return null;
+    const cpus = n(prefix ? `${prefix}Cpus` : 'cpus') || n('cpus');
+    const memory = n(prefix ? `${prefix}MemoryGb` : 'memoryGb') || n('memoryGb');
+    return (
+      <Tag key={name} title={`${slots} ${name} agents at once, each with ${cpus || 'unlimited'} CPUs and ${memory || 'unlimited'} GB`}>
+        {slots} × {name}
+        {memory ? ` · ${memory} GB` : ''}
+      </Tag>
+    );
+  };
+  return <div className="row tight">{[size('small', 'small'), size('standard', ''), size('large', 'large')]}</div>;
 }
 
 function GitHubSetup({ onExisting }: { onExisting: () => void }) {
@@ -278,14 +288,10 @@ function GitHubSetup({ onExisting }: { onExisting: () => void }) {
   };
   return (
     <div className="panel-body stack">
-      <p>
-        Pull requests and comments come from Workshop's own bot, so you can review its work on GitHub and get notified when it asks a question. With a personal access token they come from you
-        instead, and you merge its pull requests yourself.
-      </p>
-      <ol className="small" style={{ margin: 0, paddingLeft: 20 }}>
+      <ol className="steps">
         <li>Create the App: GitHub shows a pre-filled page. Click Create GitHub App.</li>
         <li>Install it on your account and any organisations, choosing which repositories it can see.</li>
-        <li>Turn on the repositories Workshop should work on, below.</li>
+        <li>Turn on the repositories Workshop should work on, under Repositories.</li>
       </ol>
       <ErrorNote error={error} />
       <div className="row">
@@ -293,165 +299,10 @@ function GitHubSetup({ onExisting }: { onExisting: () => void }) {
           Create the GitHub App
         </button>
         <button className="link" onClick={onExisting}>
-          Use an existing App or a personal access token instead
+          Use an existing App or a personal access token
         </button>
       </div>
     </div>
-  );
-}
-
-function RepoRow({ repo, onChange }: { repo: RepoView; onChange: (id: number, body: object) => Promise<unknown> }) {
-  const [enabling, setEnabling] = useState<boolean | null>(null);
-  const toggle = (enabled: boolean) => {
-    setEnabling(enabled);
-    onChange(repo.id, { enabled }).finally(() => setEnabling(null));
-  };
-  const saved = (): RepoDraft => ({ selection: repo.selection, priority: String(repo.priority), image: repo.image ?? '', mergeWithoutReview: repo.mergeWithoutReview, pushToDefault: repo.pushToDefault, raiseTickets: repo.raiseTickets });
-  const [draft, setDraft] = useState(saved);
-  const [saving, setSaving] = useState(false);
-  const changes = repoChanges(repo, draft);
-  const dirty = Object.keys(changes).length > 0;
-  const save = () => {
-    setSaving(true);
-    onChange(repo.id, changes).finally(() => setSaving(false));
-  };
-  const [imageTicket, setImageTicket] = useState<{ busy?: boolean; opened?: { number: number; url: string }; error?: string }>({});
-  const openImageTicket = () => {
-    setImageTicket({ busy: true });
-    api<{ number: number; url: string }>(`/repos/${repo.id}/image-ticket`, { body: {} }).then(
-      (opened) => setImageTicket({ opened }),
-      (e: Error) => setImageTicket({ error: e.message }),
-    );
-  };
-  return (
-    <li className={`spread${enabling === null ? '' : ' pending'}`} aria-busy={enabling !== null}>
-      <label className="row">
-        <input type="checkbox" checked={enabling ?? repo.enabled} disabled={enabling !== null} onChange={(e) => toggle(e.target.checked)} />
-        <span>{repo.fullName}</span>
-        {repo.private && <span className="tag">Private</span>}
-        {repo.priority !== 0 && <span className="tag">Priority {repo.priority}</span>}
-        {repo.mergeWithoutReview && !repo.pushToDefault && <span className="tag">Merges without review</span>}
-        {repo.pushToDefault && <span className="tag">Pushes to {repo.defaultBranch}</span>}
-        {enabling !== null && <span className="spinner" role="status" aria-label={enabling ? 'Turning on' : 'Turning off'} />}
-      </label>
-      {repo.enabled && enabling === null && (
-        <div className="repo-settings">
-          <form
-            className="row"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (dirty) save();
-            }}
-          >
-            <label className="row small">
-              <span className="muted" style={{ whiteSpace: 'nowrap' }}>
-                Tickets to work on
-              </span>
-              <select style={{ width: 'auto' }} value={draft.selection} onChange={(e) => setDraft({ ...draft, selection: e.target.value })}>
-                <option value="all">All open tickets</option>
-                <option value="nominated">Only nominated tickets</option>
-              </select>
-            </label>
-            <label className="row small">
-              <span className="muted">Priority</span>
-              <input type="number" step={1} min={-100} max={100} style={{ width: 80 }} value={draft.priority} onChange={(e) => setDraft({ ...draft, priority: e.target.value })} />
-            </label>
-            <label className="row small">
-              <input type="checkbox" checked={draft.mergeWithoutReview} onChange={(e) => setDraft({ ...draft, mergeWithoutReview: e.target.checked })} />
-              <span className="muted">Merge without review</span>
-            </label>
-            <label className="row small" title="Reviewed work goes on the default branch as one commit. No pull request is opened and nothing waits for you.">
-              <input type="checkbox" checked={draft.pushToDefault} onChange={(e) => setDraft({ ...draft, pushToDefault: e.target.checked })} />
-              <span className="muted">Push to {repo.defaultBranch}, no pull request</span>
-            </label>
-            <label className="row small" title="When an agent comes across a problem outside its ticket, it reports it instead of fixing it there, and Workshop opens a ticket.">
-              <input type="checkbox" checked={draft.raiseTickets} onChange={(e) => setDraft({ ...draft, raiseTickets: e.target.checked })} />
-              <span className="muted">Agents open tickets for what they notice</span>
-            </label>
-            <label className="row small">
-              <span className="muted">Image</span>
-              <input className="mono" style={{ width: 300 }} placeholder="Standard agent image" value={draft.image} onChange={(e) => setDraft({ ...draft, image: e.target.value })} />
-            </label>
-            <button className="primary" disabled={!dirty || saving}>
-              {saving ? 'Saving…' : 'Save changes'}
-            </button>
-            {dirty && !saving && (
-              <button type="button" className="link small" onClick={() => setDraft(saved())}>
-                Discard
-              </button>
-            )}
-          </form>
-          {repo.mergeWithoutReview && repo.mergeWarning && (
-            <p className="row small">
-              <Status tone="attention">{repo.mergeWarning}</Status>
-            </p>
-          )}
-          <p className="row small muted">
-            <span>Needs more tools than the standard image?</span>
-            {imageTicket.opened ? (
-              <a href={imageTicket.opened.url} target="_blank" rel="noreferrer">
-                Opened #{imageTicket.opened.number}
-              </a>
-            ) : (
-              <button type="button" className="link" onClick={openImageTicket} disabled={imageTicket.busy}>
-                {imageTicket.busy ? 'Opening ticket…' : 'Set up agent image'}
-              </button>
-            )}
-            {imageTicket.error && <span className="error-text">{imageTicket.error}</span>}
-          </p>
-        </div>
-      )}
-    </li>
-  );
-}
-
-function Repos() {
-  const { data, error, reload } = useApi<RepoView[]>('/repos', ['repos']);
-  const [query, setQuery] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const fetchedOnce = useRef(false);
-
-  const refresh = () => {
-    setBusy(true);
-    setActionError(null);
-    api('/repos/refresh', { body: {} })
-      .then(reload, (e: Error) => setActionError(e.message))
-      .finally(() => setBusy(false));
-  };
-  useEffect(() => {
-    if (data && !data.length && !fetchedOnce.current) {
-      fetchedOnce.current = true;
-      refresh();
-    }
-  });
-  const update = (id: number, body: object) => api(`/repos/${id}`, { method: 'PUT', body }).then(reload, (e: Error) => setActionError(e.message));
-  const shown = (data ?? []).filter((r) => r.fullName.toLowerCase().includes(query.toLowerCase()));
-
-  return (
-    <Panel
-      title="Repositories"
-      action={
-        <button onClick={refresh} disabled={busy}>
-          {busy ? 'Refreshing…' : 'Refresh list'}
-        </button>
-      }
-    >
-      <div className="panel-body stack">
-        <p className="small muted">Workshop only works on repositories you turn on. Turning one on creates its workshop/ labels on GitHub. A new repository only works on tickets you nominate with the workshop/nominated label. Switch it to all open tickets when you're ready. Repositories with a higher priority go first: a lower one waits until every open ticket in the higher ones has been classified. For a repository set to nominated tickets, add the workshop/nominated label to the tickets you want worked on. Set up agent image opens a ticket asking an agent to add .workshop/Dockerfile if the repository needs more tools than the standard image has. Once you merge it, Workshop builds that image and later runs use it. Merge without review merges each pull request as soon as GitHub allows it, without waiting for your approval. Make CI a required status check first.</p>
-        <input type="search" placeholder="Search repositories" aria-label="Search repositories" value={query} onChange={(e) => setQuery(e.target.value)} />
-        <ErrorNote error={actionError ?? error} />
-      </div>
-      {shown.length ? (
-        <ul className="list">
-          {shown.map((r) => (
-            <RepoRow key={r.id} repo={r} onChange={update} />
-          ))}
-        </ul>
-      ) : (
-        <p className="empty">{data?.length ? 'No repositories match.' : 'No repositories yet. Install the GitHub App, then refresh the list.'}</p>
-      )}
-    </Panel>
   );
 }
 
@@ -472,7 +323,6 @@ export function Connections() {
 
   return (
     <div className="stack">
-      <h1>Connections</h1>
       {banner && (
         <p className={`notice ${banner.tone}`}>
           {banner.text}{' '}
@@ -487,16 +337,21 @@ export function Connections() {
         return (
           <Panel
             key={section.kind}
-            title={section.title}
+            title={
+              <>
+                {section.title}
+                <Hint>{section.blurb}</Hint>
+              </>
+            }
             action={
               addable.length > 0 && (section.kind !== 'vcs' || items.length > 0) ? (
-                <button onClick={() => setEditing({ provider: addable[0] })}>Add</button>
+                <button onClick={() => setEditing({ provider: addable[0] })}>
+                  <Icon name="plus" />
+                  Add
+                </button>
               ) : undefined
             }
           >
-            <p className="panel-body small muted" style={{ paddingBottom: 0 }}>
-              {section.blurb}
-            </p>
             {section.kind === 'vcs' && !items.length ? (
               <GitHubSetup onExisting={() => setEditing({ provider: providerFor('github') })} />
             ) : items.length ? (
@@ -513,12 +368,11 @@ export function Connections() {
                 ))}
               </ul>
             ) : (
-              <p className="empty">None yet.</p>
+              <Empty>None yet.</Empty>
             )}
           </Panel>
         );
       })}
-      {connections.some((c) => c.kind === 'vcs') && <Repos />}
       {editing && <ConnectionModal provider={editing.provider} connection={editing.connection} connections={connections} onClose={() => setEditing(null)} />}
     </div>
   );
