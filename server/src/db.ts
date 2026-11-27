@@ -274,6 +274,7 @@ export const MIGRATIONS = [
   ALTER TABLE repos ADD COLUMN raise_tickets INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE tickets ADD COLUMN raised TEXT; -- JSON: the tickets opened from this one's runs
   `,
+  `ALTER TABLE runs ADD COLUMN size TEXT; -- small, standard or large: the container size it started with; null on older rows means standard`,
 ];
 
 export let db: DatabaseSync;

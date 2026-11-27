@@ -1,4 +1,4 @@
-import type { AllowanceView, Limits, Topic, Push, RepoSelection, Settings, UsageWindow } from '../api-types.ts';
+import type { AgentSize, AllowanceView, Limits, Topic, Push, RepoSelection, Settings, UsageWindow } from '../api-types.ts';
 import { label, nextStep, parseLabels, type Step } from '../workflow/labels.ts';
 
 /** Whether Workshop may work on a ticket: always for a whole-backlog repository, otherwise only when nominated. */
@@ -102,14 +102,28 @@ export interface HostLoad {
   healthy: boolean;
   /** Switched on for new agents. Off keeps the host connected and its running agents going. */
   available: boolean;
+  /** Slots and running agents by size. Small and large are present only when the host keeps slots for them. */
+  pools: Partial<Record<AgentSize, Pool>> & { standard: Pool };
+}
+
+export interface Pool {
   slots: number;
   busy: number;
 }
 
-/** The healthy, available host with the most free slots. */
-export function pickHost(hosts: HostLoad[]): number | null {
-  const free = hosts.filter((h) => h.healthy && h.available && h.busy < h.slots);
-  free.sort((a, b) => b.slots - b.busy - (a.slots - a.busy) || a.id - b.id);
+/** The pool an agent of this size runs in on a host: its own when the host keeps one, otherwise the standard one. */
+export const poolFor = (h: Pick<HostLoad, 'pools'>, size: AgentSize): Pool => h.pools[size] ?? h.pools.standard;
+
+/** Free slots for an agent of this size. */
+export function freeSlots(h: Pick<HostLoad, 'pools'>, size: AgentSize): number {
+  const p = poolFor(h, size);
+  return p.slots - p.busy;
+}
+
+/** The healthy, available host with the most free slots for an agent of this size. */
+export function pickHost(hosts: HostLoad[], size: AgentSize = 'standard'): number | null {
+  const free = hosts.filter((h) => h.healthy && h.available && freeSlots(h, size) > 0);
+  free.sort((a, b) => freeSlots(b, size) - freeSlots(a, size) || a.id - b.id);
   return free[0]?.id ?? null;
 }
 

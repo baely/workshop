@@ -96,6 +96,13 @@ Add each machine that should run agents under **Agent hosts**. Workshop pulls th
 
 **Agents at once** (default 1) and the **per-agent CPU and memory** limits control capacity. The connection check shows the machine's CPUs and memory and how many agents would fit.
 
+Not every agent needs the same machine. A host can keep extra slots, with their own CPU and memory limits, for two other sizes:
+
+- **Small agents** are the Classifier, which only reads the ticket and the code. A few small slots let triage carry on while the standard slots are busy.
+- **Large agents** are the ones that drive a browser, and Implementation and the Code reviewer on XL tickets.
+
+With 0 or nothing in a size's "at once" field, those agents run as standard ones. A size with slots of its own never borrows a standard slot: when every large slot is taken, the next large agent waits.
+
 Repositories that need other toolchains (Android SDK, Ruby, Go…) can have their own image. Press **Set up agent image** on the repository (step 4): Workshop opens a ticket asking an agent to add `.workshop/Dockerfile` (`ARG WORKSHOP_BASE` then `FROM ${WORKSHOP_BASE}`), or to decline if the standard image is enough. Once that's merged, each run builds the Dockerfile from the default branch on its agent host, on top of the image the run would otherwise use, and reuses the build until the folder or that image changes. If the build fails, the run uses the standard image and Workshop raises an alert. A `workshop.environment` label on the image is passed to agents as a description of their environment. You can also set a prebuilt image on the repository, which takes precedence over `.workshop/` and is used for every run. Workshop has two images, `workshop-agent` and `workshop-agent-browser` (the same plus Playwright with headless Chromium). Implementation runs on tickets labelled `workshop/needs:browser` use the browser image; the Classifier sets that label, and you can set it yourself. A hand-set image is used for every run, so build it `FROM` the browser image if its tickets need a browser. The browser image's `workshop.capabilities` label tells agents what they have; agents on an image without a browser are told so.
 
 ### 3. Claude

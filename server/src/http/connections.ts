@@ -1,9 +1,10 @@
 import { Router, type Response } from 'express';
 import { suggestModels } from '../agents.ts';
-import type { FieldDef, ProviderInfo, TestResult, UsageWindow } from '../api-types.ts';
+import { AGENT_SIZES, type FieldDef, type ProviderInfo, type TestResult, type UsageWindow } from '../api-types.ts';
 import { randomToken } from '../crypto.ts';
 import { all, one, run } from '../db.ts';
 import { publish } from '../events.ts';
+import { limitsFor, slotsBySize, type DockerConfig } from '../providers/docker/index.ts';
 import { appManifest, convertManifest, type GitHubConfig } from '../providers/github/index.ts';
 import {
   createConnection,
@@ -92,9 +93,14 @@ async function describe(c: Connection): Promise<string> {
       const specs = `${s.cpus} CPUs, ${memGb} GB RAM, ${s.os} (${s.arch})`;
       // json_set leaves updated_at alone, so the cached client (and its pinned SSH host key) stays.
       run("UPDATE connections SET config = json_set(config, '$.specs', ?) WHERE id = ?", specs, c.id);
-      const cfg = c.config as { cpus?: number; memoryGb?: number };
+      const cfg = c.config as Partial<DockerConfig>;
       const fits = Math.max(1, Math.min(Math.floor(s.cpus / (cfg.cpus || 2)), Math.floor(memGb / (cfg.memoryGb || 4))));
-      return `Connected to ${s.name}: ${specs}, Docker ${s.version}. With the per-agent limits set, up to ${fits} agent(s) fit at once.`;
+      const slots = slotsBySize(cfg);
+      // With slots by size, what matters is whether every slot fits in memory at once.
+      const sizes = AGENT_SIZES.filter((size) => slots[size]);
+      const fullGb = sizes.reduce((gb, size) => gb + slots[size]! * (limitsFor(cfg, size).memoryGb ?? 0), 0);
+      const sized = sizes.length > 1 ? ` With every slot in use (${sizes.map((size) => `${slots[size]} ${size}`).join(', ')}), agents may use up to ${fullGb} GB of memory.` : '';
+      return `Connected to ${s.name}: ${specs}, Docker ${s.version}. With the per-agent limits set, up to ${fits} standard agent(s) fit at once.${sized}`;
     }
     case 'anthropic': {
       const parts: string[] = [];
