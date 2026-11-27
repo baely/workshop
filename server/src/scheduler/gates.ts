@@ -160,6 +160,14 @@ export function implicitPriority(nodes: { key: string; prioritised: boolean; blo
 }
 
 /**
+ * The higher-priority repos whose queued tickets go ahead of one in a repo of this priority. It only
+ * orders the queue: a ticket that fits a free slot nothing ahead of it can use still starts.
+ */
+export function priorityAhead(priority: number, queued: { repo: string; priority: number }[]): string[] {
+  return [...new Set(queued.filter((q) => q.priority > priority).map((q) => q.repo))];
+}
+
+/**
  * How many distinct open tickets wait on each ticket, directly or through others. Keys and blockers
  * are `refKey`s; blockers Workshop doesn't know are skipped, and in a cycle no ticket counts itself.
  * Only tickets something waits on are in the result.
@@ -188,19 +196,6 @@ export function waitingCounts(nodes: { key: string; blockers: string[] }[]): Map
     counts.set(root, seen.size - 1);
   }
   return counts;
-}
-
-/** A ticket the Classifier still has to look at: no stage yet, and nothing it waits on. */
-export function isUnclassified(labels: string[], open: boolean, blockers: string[]): boolean {
-  if (blockers.length) return false;
-  const step = nextStep(parseLabels(labels), open);
-  return step?.kind === 'agent' && step.agent === 'classifier' && step.mode === 'normal';
-}
-
-/** Why unclassified tickets in higher-priority repos hold a ticket back, or null. */
-export function priorityBlock(priority: number, waiting: { repo: string; priority: number }[]): string | null {
-  const names = [...new Set(waiting.filter((w) => w.priority > priority).map((w) => w.repo))];
-  return names.length ? `Waiting for ${joinRefs(names)} to be classified first` : null;
 }
 
 /** Finish work in flight before starting new work. */
