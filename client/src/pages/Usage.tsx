@@ -240,7 +240,7 @@ function SpendOverTime({ data, group, metric }: { data: UsageHistory; group: Gro
   const folded = foldSeries(all, metric);
   const series = folded.map((s, i) => ({ name: s.name, key: s.key, color: SERIES_COLORS[i] ?? OTHER_COLOR, values: s.points.map((p) => value(p, metric)) }));
   const format = formatter(metric);
-  const unit = data.bucket === 'day' ? 'day' : 'month';
+  const unit = data.bucket;
   const groupLabel = GROUPINGS.find((g) => g.value === group)!.label;
   const total = folded.reduce((n, s) => n + value(s.totals, metric), 0);
   const rows = all.filter((s) => value(s.totals, metric) > 0);
@@ -272,11 +272,65 @@ function SpendOverTime({ data, group, metric }: { data: UsageHistory; group: Gro
   );
 }
 
+/** What each ticket's runs used in the range, the most expensive first. */
+function TicketUsage({ data }: { data: UsageHistory }) {
+  const total = data.byTicket.reduce((n, t) => n + t.costUsd, 0);
+  return (
+    <Panel title="Cost per ticket">
+      <div className="panel-body stack">
+        {data.byTicket.length === 0 ? (
+          <p className="small muted">No agent runs in this range.</p>
+        ) : (
+          <>
+            <p className="small muted">
+              What each ticket's agent runs used in this range, the most expensive first{data.byTicket.length > 1 ? `: ${money(total / data.byTicket.length)} a ticket on average` : ''}. A ticket still
+              being worked on counts what it has used so far.
+            </p>
+            <div className="table-wrap">
+              <table className="spend-table">
+                <thead>
+                  <tr>
+                    <th>Ticket</th>
+                    <th className="num">Runs</th>
+                    <th className="num">Input</th>
+                    <th className="num">Output</th>
+                    <th className="num">Cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.byTicket.map((t) => (
+                    <tr key={`${t.repo}#${t.number}`}>
+                      <td>
+                        {t.url ? (
+                          <a href={t.url} target="_blank" rel="noreferrer">
+                            {t.repo}#{t.number}
+                          </a>
+                        ) : (
+                          `${t.repo}#${t.number}`
+                        )}
+                        {t.title && <span className="muted"> {t.title}</span>}
+                      </td>
+                      <td className="num">{t.runs}</td>
+                      <td className="num">{tokens(t.inputTokens)}</td>
+                      <td className="num">{tokens(t.outputTokens)}</td>
+                      <td className="num">{money(t.costUsd)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
 /** Every project's share of the range, then the biggest few over time on one shared scale so their heights compare. */
 function ProjectUsage({ data, metric }: { data: UsageHistory; metric: Metric }) {
   const ranked = shares(data.byProject, metric);
   const format = formatter(metric);
-  const unit = data.bucket === 'day' ? 'day' : 'month';
+  const unit = data.bucket;
   const what = metric === 'cost' ? 'cost' : 'tokens';
   const charted = ranked.slice(0, PROJECT_CHARTS).map((r) => data.byProject.find((p) => p.key === r.key)!);
   const max = Math.max(0, ...charted.flatMap((p) => p.points.map((t) => value(t, metric))));
@@ -410,6 +464,7 @@ export function Usage() {
           <Projections data={data} now={now} />
           <SpendOverTime data={data} group={group} metric={metric} />
           <ProjectUsage data={data} metric={metric} />
+          <TicketUsage data={data} />
           {data.allowance.length > 0 && <SubscriptionUsage allowance={data.allowance} now={now} />}
         </>
       )}

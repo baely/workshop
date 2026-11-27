@@ -354,7 +354,7 @@ export interface LifetimeSpend {
   byMonth: (SpendTotals & { month: string })[];
 }
 
-export type UsageRange = '7d' | '30d' | '90d' | 'all';
+export type UsageRange = '24h' | '7d' | '30d' | '90d' | 'all';
 
 /** One group's totals per bucket; `points[i]` belongs to `buckets[i]`. */
 export interface SpendSeries {
@@ -443,16 +443,28 @@ export interface AllowanceHistory {
   burn: BurnRate;
 }
 
+/** What one ticket's runs used in the range. */
+export interface TicketSpend extends SpendTotals {
+  /** Repository `owner/name`. */
+  repo: string;
+  number: number;
+  /** Null when Workshop no longer has the ticket. */
+  title: string | null;
+  url: string | null;
+}
+
 export interface UsageHistory {
   range: UsageRange;
-  bucket: 'day' | 'month';
-  /** 'YYYY-MM-DD' or 'YYYY-MM' in the settings time zone, oldest first, no gaps. */
+  bucket: 'hour' | 'day' | 'month';
+  /** 'YYYY-MM-DDTHH', 'YYYY-MM-DD' or 'YYYY-MM' in the settings time zone, oldest first, no gaps. */
   buckets: string[];
   /** Each sorted by cost over the range, highest first. */
   byBilling: SpendSeries[];
   byModel: SpendSeries[];
   byProject: SpendSeries[];
   byConnection: SpendSeries[];
+  /** The tickets that used the most in the range, by cost, highest first; at most 50. */
+  byTicket: TicketSpend[];
   allowance: AllowanceHistory[];
   projection: {
     /** `capAt`: when today's API spend reaches the daily limit at today's pace; null when it doesn't today or the limit is $0. */

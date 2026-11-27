@@ -223,7 +223,7 @@ describe('usage history', () => {
   it('refuses an unknown range', async () => {
     const res = await request(app).get('/api/usage/history?range=1y').set('cookie', cookie);
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe('Range must be 7d, 30d, 90d or all.');
+    expect(res.body.error).toBe('Range must be 24h, 7d, 30d, 90d or all.');
     expect((await request(app).get('/api/usage/history?range=7d&range=30d').set('cookie', cookie)).status).toBe(400);
   });
 

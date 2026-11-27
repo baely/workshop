@@ -74,7 +74,7 @@ apiRouter.get('/usage/lifetime', (_req, res) => {
 
 apiRouter.get('/usage/history', (req, res) => {
   const range = req.query.range ?? '30d';
-  check(typeof range === 'string' && USAGE_RANGES.includes(range as UsageRange), 'Range must be 7d, 30d, 90d or all.');
+  check(typeof range === 'string' && USAGE_RANGES.includes(range as UsageRange), 'Range must be 24h, 7d, 30d, 90d or all.');
   res.json(usageHistory(range as UsageRange, getSettings().timezone));
 });
 

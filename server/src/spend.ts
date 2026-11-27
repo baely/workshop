@@ -1,6 +1,6 @@
 import { getAgent } from './agents.ts';
 import { allowanceSamples, allowanceViews, apiSpendSince } from './allowance.ts';
-import type { AgentName, AllowanceHistory, BacklogPool, BacklogProjection, BurnRate, LifetimeSpend, SpendSeries, SpendTotals, Stage, UsageHistory, UsageRange } from './api-types.ts';
+import type { AgentName, AllowanceHistory, BacklogPool, BacklogProjection, BurnRate, LifetimeSpend, SpendSeries, SpendTotals, Stage, TicketSpend, UsageHistory, UsageRange } from './api-types.ts';
 import { all, one, run } from './db.ts';
 import {
   BACKLOG_HISTORY,
@@ -129,8 +129,11 @@ export function lifetimeSpend(timeZone: string): LifetimeSpend {
 }
 
 const DAY = 86400_000;
-const RANGE_DAYS: Record<Exclude<UsageRange, 'all'>, number> = { '7d': 7, '30d': 30, '90d': 90 };
-export const USAGE_RANGES: UsageRange[] = ['7d', '30d', '90d', 'all'];
+const HOUR = 3600_000;
+const RANGE_DAYS: Record<Exclude<UsageRange, '24h' | 'all'>, number> = { '7d': 7, '30d': 30, '90d': 90 };
+export const USAGE_RANGES: UsageRange[] = ['24h', '7d', '30d', '90d', 'all'];
+/** How many tickets the Usage page's cost per ticket lists. */
+const TICKET_ROWS = 50;
 
 /** 'YYYY-MM-DD' a number of calendar days before `key`; calendar arithmetic, so DST can't skip or repeat a day. */
 const dayBefore = (key: string, days: number) => {
@@ -166,6 +169,25 @@ function seriesOf(rows: SpendRow[], buckets: string[], bucketOf: (row: SpendRow)
     .sort((a, b) => b.totals.costUsd - a.totals.costUsd);
 }
 
+/** What each ticket's runs used, biggest cost first. Spend recorded without its ticket is left out. */
+function ticketSpend(rows: SpendRow[]): TicketSpend[] {
+  const known = rows.filter((r) => r.repo !== null && r.ticket !== null);
+  return [...groupBy(known, (r) => `${r.repo}#${r.ticket}`)]
+    .sort(([, a], [, b]) => b.costUsd - a.costUsd)
+    .slice(0, TICKET_ROWS)
+    .map(([key, t]) => {
+      const at = key!.lastIndexOf('#');
+      const repo = key!.slice(0, at);
+      const number = Number(key!.slice(at + 1));
+      const ticket = one<{ title: string; url: string }>(
+        'SELECT tickets.title, tickets.url FROM tickets JOIN repos ON repos.id = tickets.repo_id WHERE repos.full_name = ? AND tickets.number = ?',
+        repo,
+        number,
+      );
+      return { repo, number, title: ticket?.title ?? null, url: ticket?.url ?? null, ...t };
+    });
+}
+
 /** Spend over time for the Usage page, by every grouping, with subscription readings and projections. */
 export function usageHistory(range: UsageRange, timeZone: string, now = Date.now()): UsageHistory {
   const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -177,7 +199,18 @@ export function usageHistory(range: UsageRange, timeZone: string, now = Date.now
   let rows: SpendRow[];
   let buckets: string[];
   let bucketOf: (row: SpendRow) => string;
-  if (range === 'all') {
+  if (range === '24h') {
+    // 'YYYY-MM-DDTHH' on the settings clock. The hour a clock change repeats is one bucket, so there can be 23.
+    const hourFmt = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' });
+    const hourOf = (ts: number) => {
+      const p = Object.fromEntries(hourFmt.formatToParts(ts).map((x) => [x.type, x.value]));
+      return `${p.year}-${p.month}-${p.day}T${p.hour}`;
+    };
+    buckets = [...new Set(Array.from({ length: 24 }, (_, i) => hourOf(now - (23 - i) * HOUR)))];
+    const keys = new Set(buckets);
+    bucketOf = (row) => hourOf(row.ts);
+    rows = all<SpendRow>('SELECT * FROM spend WHERE ts >= ? ORDER BY ts, id', now - 25 * HOUR).filter((r) => keys.has(bucketOf(r)));
+  } else if (range === 'all') {
     rows = all<SpendRow>('SELECT * FROM spend ORDER BY ts, id');
     buckets = monthsBetween(rows.length ? monthOf(rows[0].ts) : thisMonth, thisMonth);
     bucketOf = (row) => monthOf(row.ts);
@@ -255,12 +288,13 @@ export function usageHistory(range: UsageRange, timeZone: string, now = Date.now
 
   return {
     range,
-    bucket: range === 'all' ? 'month' : 'day',
+    bucket: range === '24h' ? 'hour' : range === 'all' ? 'month' : 'day',
     buckets,
     byBilling: seriesOf(rows, buckets, bucketOf, billingOf, (k) => (k === 'api' ? 'API' : 'Subscription')),
     byModel: seriesOf(rows, buckets, bucketOf, (r) => r.model, (k) => k),
     byProject: seriesOf(rows, buckets, bucketOf, (r) => r.repo ?? '', (k) => k || 'Unknown'),
     byConnection: seriesOf(rows, buckets, bucketOf, dimensions(timeZone).connection, connectionName),
+    byTicket: ticketSpend(rows),
     allowance,
     projection: {
       api: { todayUsd, dailyCapUsd, capAt: capAt(todayUsd, dailyCapUsd, dayStart, now), perDayUsd: api.perDayUsd, monthToDateUsd: api.monthToDateUsd, monthEndUsd: api.monthEndUsd, burn: api.burn },

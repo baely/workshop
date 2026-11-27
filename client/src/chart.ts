@@ -6,6 +6,7 @@ export type Metric = 'cost' | 'tokens';
 export type Grouping = 'billing' | 'model' | 'project' | 'connection';
 
 export const RANGES: { value: UsageRange; label: string }[] = [
+  { value: '24h', label: 'Last 24 hours' },
   { value: '7d', label: 'Last 7 days' },
   { value: '30d', label: 'Last 30 days' },
   { value: '90d', label: 'Last 90 days' },
@@ -60,8 +61,9 @@ export function foldSeries(series: SpendSeries[], metric: Metric, n = 4): SpendS
   return [...kept.slice(0, n), other];
 }
 
-/** '26 Nov' for a 'YYYY-MM-DD' day, 'Nov 2026' for a 'YYYY-MM' month, in the reader's locale. */
-export function bucketLabel(key: string, bucket: 'day' | 'month', locale?: string): string {
+/** '14:00' for a 'YYYY-MM-DDTHH' hour, '26 Nov' for a 'YYYY-MM-DD' day, 'Nov 2026' for a 'YYYY-MM' month, in the reader's locale. */
+export function bucketLabel(key: string, bucket: 'hour' | 'day' | 'month', locale?: string): string {
+  if (bucket === 'hour') return `${key.slice(11, 13)}:00`;
   const date = new Date(`${bucket === 'day' ? key : `${key}-01`}T00:00:00Z`);
   return date.toLocaleDateString(locale, bucket === 'day' ? { day: 'numeric', month: 'short', timeZone: 'UTC' } : { month: 'short', year: 'numeric', timeZone: 'UTC' });
 }
