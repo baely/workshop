@@ -1,8 +1,8 @@
 name: Build
 
 # Every push and pull request is type-checked and tested (including the branches
-# Workshop's own agents push). The agent image is built and smoke-tested everywhere;
-# images are only published from main.
+# Workshop's own agents push). The agent image is built and smoke-tested everywhere,
+# on amd64 and arm64; images are only published from main, for both.
 on:
   push:
   pull_request:
@@ -28,7 +28,12 @@ jobs:
       - run: bash -n agent/entrypoint.sh
 
   agent-image:
-    runs-on: ubuntu-latest
+    # Natively on each architecture agent hosts run: amd64, and arm64 (Apple silicon, Raspberry Pi, Graviton).
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -65,6 +70,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The arm64 halves are built under emulation.
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
@@ -87,6 +97,7 @@ jobs:
         with:
           context: agent
           target: base
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ${{ steps.meta.outputs.image }}-agent:latest
@@ -99,6 +110,7 @@ jobs:
         with:
           context: agent
           target: browser
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ${{ steps.meta.outputs.image }}-agent-browser:latest
@@ -111,6 +123,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
             APP_VERSION=${{ steps.meta.outputs.version }}
