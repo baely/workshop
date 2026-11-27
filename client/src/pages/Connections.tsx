@@ -306,7 +306,7 @@ function RepoRow({ repo, onChange }: { repo: RepoView; onChange: (id: number, bo
     setEnabling(enabled);
     onChange(repo.id, { enabled }).finally(() => setEnabling(null));
   };
-  const saved = (): RepoDraft => ({ selection: repo.selection, priority: String(repo.priority), image: repo.image ?? '', mergeWithoutReview: repo.mergeWithoutReview });
+  const saved = (): RepoDraft => ({ selection: repo.selection, priority: String(repo.priority), image: repo.image ?? '', mergeWithoutReview: repo.mergeWithoutReview, raiseTickets: repo.raiseTickets, pushToDefault: repo.pushToDefault });
   const [draft, setDraft] = useState(saved);
   const [saving, setSaving] = useState(false);
   const changes = repoChanges(repo, draft);
@@ -330,7 +330,8 @@ function RepoRow({ repo, onChange }: { repo: RepoView; onChange: (id: number, bo
         <span>{repo.fullName}</span>
         {repo.private && <span className="tag">Private</span>}
         {repo.priority !== 0 && <span className="tag">Priority {repo.priority}</span>}
-        {repo.mergeWithoutReview && <span className="tag">Merges without review</span>}
+        {repo.mergeWithoutReview && !repo.pushToDefault && <span className="tag">Merges without review</span>}
+        {repo.pushToDefault && <span className="tag">Pushes to {repo.defaultBranch}</span>}
         {enabling !== null && <span className="spinner" role="status" aria-label={enabling ? 'Turning on' : 'Turning off'} />}
       </label>
       {repo.enabled && enabling === null && (
@@ -358,6 +359,14 @@ function RepoRow({ repo, onChange }: { repo: RepoView; onChange: (id: number, bo
             <label className="row small">
               <input type="checkbox" checked={draft.mergeWithoutReview} onChange={(e) => setDraft({ ...draft, mergeWithoutReview: e.target.checked })} />
               <span className="muted">Merge without review</span>
+            </label>
+            <label className="row small" title="When an agent comes across a problem outside its ticket, it reports it instead of fixing it there, and Workshop opens a ticket.">
+              <input type="checkbox" checked={draft.raiseTickets} onChange={(e) => setDraft({ ...draft, raiseTickets: e.target.checked })} />
+              <span className="muted">Agents open tickets for what they notice</span>
+            </label>
+            <label className="row small" title="Reviewed work goes on the default branch as one commit. No pull request is opened and nothing waits for you.">
+              <input type="checkbox" checked={draft.pushToDefault} onChange={(e) => setDraft({ ...draft, pushToDefault: e.target.checked })} />
+              <span className="muted">Push to {repo.defaultBranch}, no pull request</span>
             </label>
             <label className="row small">
               <span className="muted">Image</span>

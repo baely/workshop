@@ -12,10 +12,21 @@ export interface ClassifierResult {
   ui?: boolean;
 }
 
+/** Work an agent came across that is outside its ticket. Workshop opens a ticket for it. */
+export interface Noticed {
+  title: string;
+  body: string;
+}
+
+/** At most this many tickets are opened from one run. */
+export const MAX_NOTICED = 3;
+
 export interface WorkResult {
   outcome: 'done' | 'needs_info' | 'failed';
   summary: string;
   questions?: string[];
+  /** Only asked for in repositories that let agents open tickets. */
+  noticed?: Noticed[];
   tests?: string;
   /** Images this run added to /work/media. */
   media?: { path: string; caption: string }[];
@@ -139,9 +150,30 @@ const REVIEW_SCHEMA = {
   required: [...WORK_SCHEMA.required, 'findings'],
 };
 
-const SCHEMAS: Partial<Record<AgentName, object>> = { classifier: CLASSIFIER_SCHEMA, 'code-review': REVIEW_SCHEMA };
+const NOTICED_SCHEMA = {
+  type: 'array',
+  maxItems: MAX_NOTICED,
+  description:
+    "Real problems or needed work you came across that are outside this ticket: a bug somewhere else, something already broken that you didn't cause, a follow-up this change makes necessary. Don't fix them here. Workshop opens a ticket for each. Leave it empty for ideas, style, and anything this ticket should cover.",
+  items: {
+    type: 'object',
+    properties: {
+      title: { type: 'string', description: 'The ticket title: the problem in a few words.' },
+      body: { type: 'string', description: 'What is wrong or needed, where (files, lines, how to see it), and why it matters. Written for someone who has not seen this ticket.' },
+    },
+    required: ['title', 'body'],
+    additionalProperties: false,
+  },
+};
 
-export const schemaFor = (agent: AgentName) => SCHEMAS[agent] ?? WORK_SCHEMA;
+const SCHEMAS: Partial<Record<AgentName, { properties: object }>> = { classifier: CLASSIFIER_SCHEMA, 'code-review': REVIEW_SCHEMA };
+
+/** With `noticed`, every agent but the Classifier may also report work outside its ticket. */
+export function schemaFor(agent: AgentName, opts: { noticed?: boolean } = {}): object {
+  const schema = SCHEMAS[agent] ?? WORK_SCHEMA;
+  if (!opts.noticed || agent === 'classifier') return schema;
+  return { ...schema, properties: { ...schema.properties, noticed: NOTICED_SCHEMA } };
+}
 
 const isStringList = (v: unknown) => Array.isArray(v) && v.every((q) => typeof q === 'string');
 const isText = (v: unknown) => typeof v === 'string' && v.trim() !== '';
@@ -181,6 +213,7 @@ export function parseResult(agent: AgentName, value: unknown): AgentResult | str
   if (!['done', 'needs_info', 'failed'].includes(v.outcome as string)) return 'outcome must be done, needs_info or failed.';
   if (typeof v.summary !== 'string') return 'summary is required.';
   if (v.media !== undefined && !(Array.isArray(v.media) && v.media.every((m) => m && typeof m === 'object' && typeof m.path === 'string' && typeof m.caption === 'string'))) return 'media must be a list of { path, caption }.';
+  if (v.noticed !== undefined && !(Array.isArray(v.noticed) && v.noticed.every((n) => n && typeof n === 'object' && isText(n.title) && isText(n.body)))) return 'noticed must be a list of { title, body }.';
   if (agent === 'code-review' && (v.outcome === 'done' || v.findings !== undefined) && !(Array.isArray(v.findings) && v.findings.every(isFinding))) {
     return 'findings must be a list of { severity, cause, title, detail, evidence, fix }, with severity severe, moderate or minor and cause design or implementation.';
   }

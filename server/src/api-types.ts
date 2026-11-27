@@ -92,6 +92,10 @@ export interface RepoView {
   mergeWithoutReview: boolean;
   /** What the branch check couldn't confirm when the setting was turned on (null when all was well or it's off). */
   mergeWarning: string | null;
+  /** Agents may report work they noticed outside their ticket, and Workshop opens a ticket for each. */
+  raiseTickets: boolean;
+  /** Push reviewed work straight to the default branch as one commit, with no pull request and no review by you. */
+  pushToDefault: boolean;
 }
 
 export type AgentName = 'classifier' | 'design' | 'design-review' | 'implement' | 'code-review' | 'merge';

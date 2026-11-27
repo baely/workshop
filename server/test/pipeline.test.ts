@@ -29,6 +29,7 @@ const { connectionPaused, drive, isDriving, launch, PAUSE_GRACE_MS, requestPause
 const { buildQueue, forgetProbe, hostLoads, launchNow, mergeApproved, probeAllowance, reattachRuns, refreshNow, resumeNow, resumePaused, settleManual } = await import('../src/scheduler/loop.ts');
 const { setBypassLimits, setPrioritised, setPush, getTicket, ticketView, getRepo } = await import('../src/tickets.ts');
 const { syncRepo, HELD_CHECKS_PER_SYNC } = await import('../src/scheduler/sync.ts');
+const { pushMessage } = await import('../src/scheduler/merge.ts');
 const { getSettings, saveSettings } = await import('../src/settings.ts');
 const { label } = await import('../src/workflow/labels.ts');
 
@@ -2410,6 +2411,150 @@ describe('merge step', () => {
     fake.vcs.pullRequestState = vi.fn(async () => pr({}));
     await mergeApproved(false);
     expect(fake.vcs.merge).toHaveBeenCalledWith(expect.anything(), 7);
+  });
+});
+
+describe('tickets for what agents notice', () => {
+  const noticed = [
+    { title: 'Login page crashes on an empty password', body: 'src/login.ts:40 reads password.length without a guard.' },
+    { title: 'Add  dark mode', body: 'The same as this ticket, so it is left out.' },
+  ];
+  const env = (n: object[] = noticed) => new FakeEnv({ prepare: ['ok'], run: [result({ outcome: 'done', summary: 'Done.', noticed: n })], publish: [line({ before: '', after: 'def5678', ahead: 1 })] });
+  const file = (e: InstanceType<typeof FakeEnv>, name: string) => String(e.started.find((s) => s.cmd?.[0] === 'run')!.files![name]);
+
+  beforeEach(() => {
+    run('UPDATE repos SET raise_tickets = 1 WHERE id = 1');
+    run('UPDATE tickets SET raised = NULL WHERE id = 1');
+    let next = 40;
+    fake.tickets.createTicket = vi.fn(async () => ({ number: ++next, url: `https://github.com/me/app/issues/${next}` }));
+  });
+  afterEach(() => run('UPDATE repos SET raise_tickets = 0 WHERE id = 1'));
+
+  it('opens a ticket for each, labelled and traced back, and says so on the ticket', async () => {
+    fake.env = env();
+    expect((await settle(go())).status).toBe('succeeded');
+    expect(fake.tickets.createTicket).toHaveBeenCalledTimes(1); // the second has an open ticket's title
+    const [, made] = fake.tickets.createTicket.mock.calls[0];
+    expect(made).toMatchObject({ title: 'Login page crashes on an empty password', labels: [label.raised] });
+    expect(made.body).toContain('src/login.ts:40');
+    expect(made.body).toContain("Workshop's Implementation agent noticed this while working on #3");
+    expect(fake.tickets.comment).toHaveBeenCalledWith(expect.anything(), 3, expect.stringContaining('opened as its own ticket:\n- #41 Login page crashes on an empty password'));
+  });
+
+  it('asks the agent for them in its schema and its rules', async () => {
+    fake.env = env([]);
+    await settle(go());
+    expect(JSON.parse(file(fake.env, '.workshop/schema.json')).properties.noticed).toMatchObject({ type: 'array', maxItems: 3 });
+    expect(file(fake.env, '.workshop/system.md')).toContain('List it under "noticed"');
+    expect(fake.tickets.createTicket).not.toHaveBeenCalled();
+  });
+
+  it("doesn't open the same one again from a later run on the ticket", async () => {
+    fake.env = env();
+    await settle(go());
+    run('DELETE FROM runs');
+    fake.env = env();
+    await settle(go());
+    expect(fake.tickets.createTicket).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens at most three from one run', async () => {
+    fake.env = env([1, 2, 3, 4, 5].map((i) => ({ title: `Problem ${i}`, body: 'b' })));
+    await settle(go());
+    expect(fake.tickets.createTicket).toHaveBeenCalledTimes(3);
+  });
+
+  it("doesn't ask, or open any, on a ticket that was itself opened this way", async () => {
+    run('UPDATE tickets SET labels = ? WHERE id = 1', JSON.stringify([label.raised]));
+    fake.env = env();
+    await settle(go());
+    expect(JSON.parse(file(fake.env, '.workshop/schema.json')).properties.noticed).toBeUndefined();
+    expect(file(fake.env, '.workshop/system.md')).not.toContain('"noticed"');
+    expect(fake.tickets.createTicket).not.toHaveBeenCalled();
+  });
+
+  it("doesn't ask, or open any, with the setting off", async () => {
+    run('UPDATE repos SET raise_tickets = 0 WHERE id = 1');
+    fake.env = env();
+    await settle(go());
+    expect(JSON.parse(file(fake.env, '.workshop/schema.json')).properties.noticed).toBeUndefined();
+    expect(fake.tickets.createTicket).not.toHaveBeenCalled();
+  });
+});
+
+describe('pushing to the default branch', () => {
+  const labels = () => JSON.parse(getTicket(1)!.labels);
+  const state = (ahead: number, behind: number, subjects = ['app: fix the thing', 'Address the review']) => vi.fn(async () => ({ ahead, behind, subjects }));
+
+  beforeEach(() => {
+    run("UPDATE tickets SET pr_number = NULL, pr_status = NULL, state = 'open', labels = ? WHERE id = 1", JSON.stringify([label.size('s'), label.stage('merge')]));
+    run('UPDATE repos SET push_to_default = 1 WHERE id = 1');
+    fake.vcs.pushToDefault = vi.fn(async () => ({ ok: true, sha: 'abcdef1234', url: 'https://github.com/me/app/commit/abcdef1234' }));
+    fake.vcs.mergeDefaultInto = vi.fn(async () => 'merged');
+    fake.vcs.branchState = state(2, 0);
+  });
+  afterEach(() => run('UPDATE repos SET push_to_default = 0 WHERE id = 1'));
+
+  it('pushes an up-to-date branch as one commit, says so on the ticket and finishes it', async () => {
+    await mergeApproved(false);
+    expect(fake.vcs.pushToDefault).toHaveBeenCalledWith(expect.anything(), expect.stringMatching(/^workshop\/3-/), 'app: fix the thing (#3)\n\n- Address the review');
+    expect(fake.tickets.comment).toHaveBeenCalledWith(expect.anything(), 3, expect.stringContaining('pushed this to `main` as [`abcdef1`]'));
+    expect(fake.vcs.openPullRequest).not.toHaveBeenCalled();
+    expect(getTicket(1)).toMatchObject({ state: 'closed', pr_status: 'merged' });
+    expect(labels()).not.toContain(label.stage('merge'));
+  });
+
+  it('brings a branch that is behind up to date first, and pushes on a later check', async () => {
+    fake.vcs.branchState = state(2, 3);
+    await mergeApproved(false);
+    expect(fake.vcs.mergeDefaultInto).toHaveBeenCalled();
+    expect(fake.vcs.pushToDefault).not.toHaveBeenCalled();
+    expect(getTicket(1)).toMatchObject({ state: 'open', pr_status: 'behind' });
+  });
+
+  it('leaves a conflict to the Merge agent', async () => {
+    fake.vcs.branchState = state(2, 3);
+    fake.vcs.mergeDefaultInto = vi.fn(async () => 'conflict');
+    await mergeApproved(false);
+    expect(fake.vcs.pushToDefault).not.toHaveBeenCalled();
+    expect(getTicket(1)!.pr_status).toBe('conflict');
+    expect(labels()).toContain(label.stage('merge'));
+  });
+
+  it('raises an alert and tries again later when the push is refused', async () => {
+    fake.vcs.pushToDefault = vi.fn(async () => ({ ok: false, message: 'Protected branch update failed' }));
+    await mergeApproved(false);
+    expect(getTicket(1)).toMatchObject({ state: 'open', pr_status: 'blocked' });
+    expect(one<{ message: string }>("SELECT message FROM alerts WHERE kind = 'merge-failed' ORDER BY id DESC")!.message).toContain("Couldn't push me/app#3 to main: Protected branch update failed");
+  });
+
+  it('finishes a ticket whose branch has nothing new', async () => {
+    fake.vcs.branchState = state(0, 0, []);
+    await mergeApproved(false);
+    expect(fake.vcs.pushToDefault).not.toHaveBeenCalled();
+    expect(getTicket(1)!.state).toBe('closed');
+  });
+
+  it('still merges the pull request of a ticket that has one', async () => {
+    run('UPDATE tickets SET pr_number = 7 WHERE id = 1');
+    fake.vcs.pullRequestState = vi.fn(async () => ({ number: 7, url: 'u', state: 'open', headSha: 'abc', mergeable: 'clean', decision: 'approved' }));
+    fake.vcs.merge = vi.fn(async () => ({ merged: true }));
+    await mergeApproved(false);
+    expect(fake.vcs.merge).toHaveBeenCalledWith(expect.anything(), 7);
+    expect(fake.vcs.pushToDefault).not.toHaveBeenCalled();
+  });
+});
+
+describe('the pushed commit message', () => {
+  const t = { number: 12, title: 'Fix the thing' };
+  it("uses the branch's first commit and names the ticket once", () => {
+    expect(pushMessage(t, ['app: fix the thing'])).toBe('app: fix the thing (#12)');
+    expect(pushMessage(t, ['app: fix the thing (#12)'])).toBe('app: fix the thing (#12)');
+    expect(pushMessage(t, ['app: fix #123'])).toBe('app: fix #123 (#12)');
+  });
+  it('lists later commits, leaves out merges, and falls back to the ticket title', () => {
+    expect(pushMessage(t, ['app: fix the thing', "Merge branch 'main' into workshop/12-fix", 'Address the review'])).toBe('app: fix the thing (#12)\n\n- Address the review');
+    expect(pushMessage(t, [])).toBe('Fix the thing (#12)');
   });
 });
 

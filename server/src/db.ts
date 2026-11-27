@@ -264,6 +264,15 @@ export const MIGRATIONS = [
   `,
   `ALTER TABLE tickets ADD COLUMN blockers_checked_at INTEGER; -- last read of a held ticket's blockers, for the rotation`,
   `ALTER TABLE tickets ADD COLUMN bypass_limits INTEGER NOT NULL DEFAULT 0; -- you let it run past your subscription limits; cleared when it closes`,
+  // Agents may report work they noticed outside their ticket; Workshop opens tickets for it and remembers which.
+  `
+  ALTER TABLE repos ADD COLUMN raise_tickets INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE tickets ADD COLUMN raised TEXT; -- JSON: the tickets opened from this one's runs
+  `,
+  // Per-repository: land finished work on the default branch itself, with no pull request.
+  `
+  ALTER TABLE repos ADD COLUMN push_to_default INTEGER NOT NULL DEFAULT 0;
+  `,
   `ALTER TABLE runs ADD COLUMN size TEXT; -- small, standard or large: the container size it started with; null on older rows means standard`,
 ];
 

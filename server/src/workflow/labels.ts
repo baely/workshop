@@ -17,6 +17,7 @@ export const label = {
   failed: 'workshop/failed',
   running: 'workshop/running',
   nominated: 'workshop/nominated',
+  raised: 'workshop/raised',
 };
 
 const STAGE_TEXT: Record<Stage, string> = {
@@ -39,6 +40,7 @@ export const LABEL_DEFS: LabelDef[] = [
   { name: label.failed, color: 'a0503f', description: 'Workshop: stopped. Remove to retry' },
   { name: label.running, color: '7f8c5c', description: 'Workshop: an agent is working on this' },
   { name: label.nominated, color: '7a6a53', description: 'Workshop: work on this ticket when its repository only takes nominated tickets' },
+  { name: label.raised, color: '6b7a8f', description: 'Workshop: an agent opened this for something it noticed while working on another ticket' },
 ];
 
 export interface TicketState {
