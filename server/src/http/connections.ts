@@ -72,6 +72,10 @@ async function describe(c: Connection): Promise<string> {
       const info = await app.describe();
       const cfg = c.config as unknown as GitHubConfig;
       if (info.slug !== cfg.slug || info.htmlUrl !== cfg.htmlUrl) updateConnection(c.id, { config: { slug: info.slug, owner: info.owner, htmlUrl: info.htmlUrl } });
+      if (cfg.auth === 'token') {
+        const repos = await app.listRepos();
+        return `Signed in to GitHub as ${info.slug}. Workshop can push to ${repos.length} ${repos.length === 1 ? 'repository' : 'repositories'}.`;
+      }
       const installs = await app.installations();
       const approved = installs.filter((i) => i.approved).length;
       return `GitHub App "${info.slug}" works. ${approved} of ${installs.length} installation(s) approved.`;
@@ -135,6 +139,13 @@ connectionsRouter.get('/connections', (_req, res) => {
   res.json(listConnections().map(toView));
 });
 
+/** What creating the App does for a GitHub connection added by form: tickets come from its issues, and its owner is the first ticket author. */
+function enrolGitHub(id: number) {
+  if (!listConnections('tickets').some((c) => c.provider === 'github-issues')) createConnection('tickets', 'github-issues', 'GitHub Issues', { appConnectionId: id }, {});
+  const owner = getConnection<GitHubConfig>(id)?.config.owner;
+  if (!getSettings().authors.length && owner) saveSettings({ authors: [owner] });
+}
+
 connectionsRouter.post('/connections', async (req, res) => {
   const { provider, name, values } = req.body ?? {};
   const info = providerInfo(String(provider));
@@ -144,6 +155,7 @@ connectionsRouter.post('/connections', async (req, res) => {
   const id = createConnection(info.kind, info.id, String(name || info.name).trim(), config, secret);
   if (info.id === 'anthropic') suggestModels(id);
   const test = await testConnection(getConnection(id)!);
+  if (info.id === 'github') enrolGitHub(id);
   res.json({ connection: toView(getConnection(id)!), test });
 });
 
