@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { AgentName, Size, Stage, TicketStatePatch } from '../api-types.ts';
+import type { AgentName, AgentSize, Size, Stage, TicketStatePatch } from '../api-types.ts';
 import type { LabelDef } from '../providers/types.ts';
 
 export const SIZES: Size[] = ['xs', 's', 'm', 'l', 'xl'];
@@ -153,8 +153,21 @@ export function addNeeds(labels: string[], needs: Capability[]) {
  */
 export function imageFor(agent: AgentName, state: TicketState, images: { repo: string | null; base: string; browser: string }, ui = false): string {
   if (images.repo) return images.repo;
-  const browser = ((agent === 'implement' || agent === 'code-review') && state.needs.includes('browser')) || ((agent === 'design' || agent === 'design-review') && ui);
-  return browser ? images.browser : images.base;
+  return usesBrowser(agent, state, ui) ? images.browser : images.base;
+}
+
+const usesBrowser = (agent: AgentName, state: TicketState, ui: boolean) =>
+  ((agent === 'implement' || agent === 'code-review') && state.needs.includes('browser')) || ((agent === 'design' || agent === 'design-review') && ui);
+
+/**
+ * The container size for a run: the Classifier only reads, so it is small; an agent that drives a browser,
+ * and Implementation and the Code reviewer on an XL ticket, are large; everything else is standard.
+ */
+export function agentSize(agent: AgentName, state: TicketState, ui = false): AgentSize {
+  if (agent === 'classifier') return 'small';
+  if (usesBrowser(agent, state, ui)) return 'large';
+  if ((agent === 'implement' || agent === 'code-review') && state.size === 'xl') return 'large';
+  return 'standard';
 }
 
 /** Where a repository keeps the build context for its own agent image, on its default branch. */

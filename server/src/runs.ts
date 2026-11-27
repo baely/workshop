@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { AgentName, Billing, LogEntry, PauseReason, RunStatus, RunView } from './api-types.ts';
+import type { AgentSize, AgentName, Billing, LogEntry, PauseReason, RunStatus, RunView } from './api-types.ts';
 import { config } from './config.ts';
 import { all, one } from './db.ts';
 
@@ -35,6 +35,8 @@ export interface RunRow {
   started_at: number;
   ended_at: number | null;
   image: string | null;
+  /** The container size it started with, which decides its limits and the slot it holds; null on older rows means standard. */
+  size: AgentSize | null;
   /** The Claude connection this run just moved off, until the moved session reaches its first turn boundary. */
   switched_from: number | null;
   /** The turn limit and time limit (minutes) the latest agent session started with; null on older rows. */

@@ -861,7 +861,7 @@ describe('runner', () => {
       expect(r).toMatchObject({ status: 'paused', step: 'run', pause_reason: 'manual', resets_at: null, pause_requested_at: null, container_id: null });
       expect(fake.env.spec('publish')).toBeUndefined();
       expect(JSON.parse(getTicket(1)!.labels)).not.toContain(label.running);
-      expect(hostLoads().find((h) => h.id === ids.env)!.busy).toBe(0);
+      expect(hostLoads().find((h) => h.id === ids.env)!.pools.standard.busy).toBe(0);
       expect(readLog(id).map((e) => e.text)).toContain('Pause requested from Workshop. The agent stops after its current step.');
     });
 
@@ -1461,7 +1461,7 @@ describe('publish retries', () => {
     expect(getTicket(1)!.failures).toBe(0);
     expect(readLog(id).some((l) => l.text === r.error)).toBe(true);
     expect(ticketLabels()).toContain(label.stage('implement'));
-    expect(hostLoads()[0].busy).toBe(0); // a waiting run doesn't hold a slot
+    expect(hostLoads()[0].pools.standard.busy).toBe(0); // a waiting run doesn't hold a slot
 
     // Not due yet: nothing happens.
     reattachRuns();
@@ -1625,6 +1625,76 @@ describe('launchNow', () => {
       expect(() => launchNow(1)).toThrow("Can't start an agent yet: Depends on #2.");
     } finally {
       run('DELETE FROM tickets WHERE number = 2');
+    }
+  });
+});
+
+describe('agent sizes', () => {
+  const done = () => new FakeEnv({ prepare: ['ok'], run: [result({ outcome: 'done', summary: 'Done.', tests: 'ok' })], publish: [line({ before: '', after: 'def5678', ahead: 1 })] });
+  const configure = (cfg: object) => run('UPDATE connections SET config = ? WHERE id = ?', JSON.stringify({ mode: 'socket', slots: 1, cpus: 2, memoryGb: 4, ...cfg }), ids.env);
+  const sized = { smallSlots: 3, smallCpus: 1, smallMemoryGb: 0.5, largeSlots: 1, largeCpus: 4, largeMemoryGb: 8 };
+  const limits = () => fake.env.started.map((s: StepSpec) => [s.cpus, s.memoryMb]);
+  const candidate = () => buildQueue().find((c) => c.ticket.id === 1)!;
+
+  beforeEach(() => {
+    saveSettings({ mode: 'always' });
+    setConnectionStatus(ids.env, 'ok');
+    recordProbe(ids.model, { pct: 10, resetsAt: Date.now() + 3600_000 }, { pct: 10, resetsAt: Date.now() + 86400_000 });
+    updateAgent('implement', { model: 'claude-sonnet-5-5', modelConnectionId: ids.model });
+    fake.env = done();
+  });
+  afterEach(() => configure({}));
+
+  it("starts every step of a run with its size's limits", async () => {
+    configure(sized);
+    const id = launch({ ticketId: 1, agent: 'implement', mode: 'normal', attempt: 1, environmentId: ids.env, size: 'large', modelConnectionId: ids.model, model: 'claude-sonnet-5-5', billing: 'subscription' })!;
+    expect((await settle(id)).size).toBe('large');
+    expect(limits()).toEqual([[4, 8192], [4, 8192], [4, 8192]]);
+
+    fake.env = done();
+    run('DELETE FROM runs');
+    const small = launch({ ticketId: 1, agent: 'implement', mode: 'normal', attempt: 1, environmentId: ids.env, size: 'small', modelConnectionId: ids.model, model: 'claude-sonnet-5-5', billing: 'subscription' })!;
+    await settle(small);
+    expect(limits()[0]).toEqual([1, 512]);
+  });
+
+  it('uses the standard limits for a size the host keeps no slots for, and for runs with no size', async () => {
+    const id = launch({ ticketId: 1, agent: 'implement', mode: 'normal', attempt: 1, environmentId: ids.env, size: 'large', modelConnectionId: ids.model, model: 'claude-sonnet-5-5', billing: 'subscription' })!;
+    await settle(id);
+    expect(limits()[0]).toEqual([2, 4096]);
+    // Limits set for a size without slots are ignored too.
+    configure({ largeCpus: 8, largeMemoryGb: 16 });
+    fake.env = done();
+    run('DELETE FROM runs');
+    await settle(go());
+    expect(getRun(one<{ id: string }>('SELECT id FROM runs')!.id)!.size).toBe('standard');
+    expect(limits()[0]).toEqual([2, 4096]);
+  });
+
+  it('sizes a queued ticket, and holds it only when its own slots are taken', () => {
+    configure(sized);
+    expect(candidate()).toMatchObject({ agent: 'implement', size: 'standard', blockedBy: null, hostId: ids.env });
+
+    // An XL ticket is large: a busy standard slot doesn't hold it, a busy large one does.
+    run('UPDATE tickets SET labels = ? WHERE id = 1', JSON.stringify([label.size('xl'), label.stage('implement')]));
+    expect(candidate()).toMatchObject({ size: 'large', blockedBy: null });
+    run("INSERT INTO tickets (repo_id, number, title, body, url, author, state, labels, updated_at) VALUES (1, 9, 'Other', '', 'u', 'me', 'open', '[]', '2026-10-13T00:00:00Z')");
+    const other = one<{ id: number }>('SELECT id FROM tickets WHERE number = 9')!.id;
+    const occupy = (size: string) =>
+      run("INSERT INTO runs (id, ticket_id, agent, attempt, environment_id, size, model, billing, status, started_at) VALUES (?, ?, 'implement', 1, ?, ?, 'm', 'subscription', 'running', 0)", `busy-${size}`, other, ids.env, size);
+    try {
+      occupy('standard');
+      expect(hostLoads().find((h) => h.id === ids.env)!.pools).toEqual({ standard: { slots: 1, busy: 1 }, small: { slots: 3, busy: 0 }, large: { slots: 1, busy: 0 } });
+      expect(candidate().blockedBy).toBeNull();
+      run("DELETE FROM runs WHERE id = 'busy-standard'");
+      occupy('large');
+      expect(candidate().blockedBy).toBe('Every agent host is busy or offline');
+      // Without large slots, the large run holds the standard slot instead.
+      configure({});
+      expect(hostLoads().find((h) => h.id === ids.env)!.pools).toEqual({ standard: { slots: 1, busy: 1 } });
+      expect(candidate().blockedBy).toBe('Every agent host is busy or offline');
+    } finally {
+      run('DELETE FROM tickets WHERE number = 9');
     }
   });
 });

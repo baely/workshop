@@ -1,7 +1,7 @@
 import { Readable, Writable } from 'node:stream';
 import { finished } from 'node:stream/promises';
 import Docker from 'dockerode';
-import type { ProviderInfo } from '../../api-types.ts';
+import type { AgentSize, ProviderInfo } from '../../api-types.ts';
 import type { ContainerState, Environment, HostSpecs, LogLine, StepSpec } from '../types.ts';
 import { tar } from './tar.ts';
 
@@ -13,9 +13,36 @@ export interface DockerConfig {
   username?: string;
   /** SHA-256 of the SSH host key, pinned on first successful connection. */
   hostKey?: string;
+  /** Standard agents: how many at once, and each one's limits. */
   slots: number;
   cpus?: number;
   memoryGb?: number;
+  /** Slots of their own for small and large agents. Without them, those agents run as standard ones. */
+  smallSlots?: number;
+  smallCpus?: number;
+  smallMemoryGb?: number;
+  largeSlots?: number;
+  largeCpus?: number;
+  largeMemoryGb?: number;
+}
+
+type SizedConfig = Pick<DockerConfig, 'slots' | 'cpus' | 'memoryGb' | 'smallSlots' | 'smallCpus' | 'smallMemoryGb' | 'largeSlots' | 'largeCpus' | 'largeMemoryGb'>;
+
+/** How many agents of each size a host runs at once. Small and large are present only when the host keeps slots for them. */
+export function slotsBySize(cfg: Partial<SizedConfig>): Partial<Record<AgentSize, number>> & { standard: number } {
+  const out: Partial<Record<AgentSize, number>> & { standard: number } = { standard: Number(cfg.slots ?? 1) };
+  if (Number(cfg.smallSlots) > 0) out.small = Number(cfg.smallSlots);
+  if (Number(cfg.largeSlots) > 0) out.large = Number(cfg.largeSlots);
+  return out;
+}
+
+/** The CPU and memory limits for one agent of this size. A size the host keeps no slots for gets the standard limits. */
+export function limitsFor(cfg: Partial<SizedConfig>, size: AgentSize): { cpus?: number; memoryGb?: number } {
+  const own = size !== 'standard' && Number(cfg[`${size}Slots`]) > 0;
+  return {
+    cpus: Number((own && cfg[`${size}Cpus`]) || cfg.cpus) || undefined,
+    memoryGb: Number((own && cfg[`${size}MemoryGb`]) || cfg.memoryGb) || undefined,
+  };
 }
 
 export interface DockerSecret {
@@ -54,6 +81,12 @@ export const dockerInfo: ProviderInfo = {
     { key: 'slots', label: 'Agents at once', type: 'number', required: true, defaultValue: 1, help: 'How many agent containers may run here at the same time.' },
     { key: 'cpus', label: 'CPUs per agent', type: 'number', defaultValue: 2 },
     { key: 'memoryGb', label: 'Memory per agent (GB)', type: 'number', defaultValue: 4 },
+    { key: 'smallSlots', label: 'Small agents at once', type: 'number', placeholder: '0', help: 'Extra slots for the Classifier, which only reads the ticket and the code. With 0 or nothing here, it runs as a standard agent.' },
+    { key: 'smallCpus', label: 'CPUs per small agent', type: 'number', placeholder: 'Same as standard' },
+    { key: 'smallMemoryGb', label: 'Memory per small agent (GB)', type: 'number', placeholder: 'Same as standard' },
+    { key: 'largeSlots', label: 'Large agents at once', type: 'number', placeholder: '0', help: 'Extra slots for agents that drive a browser, and for Implementation and the Code reviewer on XL tickets. With 0 or nothing here, they run as standard agents.' },
+    { key: 'largeCpus', label: 'CPUs per large agent', type: 'number', placeholder: 'Same as standard' },
+    { key: 'largeMemoryGb', label: 'Memory per large agent (GB)', type: 'number', placeholder: 'Same as standard' },
   ],
 };
 

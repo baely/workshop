@@ -96,6 +96,9 @@ export interface RepoView {
 
 export type AgentName = 'classifier' | 'design' | 'design-review' | 'implement' | 'code-review' | 'merge';
 export type Billing = 'subscription' | 'api';
+/** How big a container an agent gets. A host may keep separate slots and limits for small and large ones. */
+export type AgentSize = 'small' | 'standard' | 'large';
+export const AGENT_SIZES: AgentSize[] = ['small', 'standard', 'large'];
 
 export interface AgentClassView {
   name: AgentName;
@@ -281,6 +284,8 @@ export interface HostView {
   available: boolean;
   slots: number;
   busy: number;
+  /** Slots by agent size, when the host keeps separate ones for small or large agents; null when every agent shares one pool. */
+  pools: { size: AgentSize; slots: number; busy: number }[] | null;
   specs: string | null;
 }
 

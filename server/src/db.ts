@@ -264,6 +264,7 @@ export const MIGRATIONS = [
   `,
   `ALTER TABLE tickets ADD COLUMN blockers_checked_at INTEGER; -- last read of a held ticket's blockers, for the rotation`,
   `ALTER TABLE tickets ADD COLUMN bypass_limits INTEGER NOT NULL DEFAULT 0; -- you let it run past your subscription limits; cleared when it closes`,
+  `ALTER TABLE runs ADD COLUMN size TEXT; -- small, standard or large: the container size it started with; null on older rows means standard`,
 ];
 
 export let db: DatabaseSync;

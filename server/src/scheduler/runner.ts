@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { AgentName, Billing } from '../api-types.ts';
+import type { AgentName, AgentSize, Billing } from '../api-types.ts';
 import { getAgent, promptFor, type AgentRow } from '../agents.ts';
 import { clearAlert, raiseAlert } from '../alerts.ts';
 import { allowanceOf, DEFAULT_LIMITS, recordLimit, recordProbe } from '../allowance.ts';
@@ -7,7 +7,7 @@ import { config } from '../config.ts';
 import { all, run } from '../db.ts';
 import { publish } from '../events.ts';
 import { hitUsageLimit, readClaudeLine, type ClaudeRun } from '../providers/anthropic/index.ts';
-import type { DockerConfig } from '../providers/docker/index.ts';
+import { limitsFor, type DockerConfig } from '../providers/docker/index.ts';
 import { untar } from '../providers/docker/tar.ts';
 import { environmentOf, getConnection, modelsOf } from '../providers/index.ts';
 import type { ContainerState, Environment, StepSpec } from '../providers/types.ts';
@@ -159,15 +159,15 @@ async function runContainer(
   const reattached = Boolean(id);
   if (!id) {
     const spec = await makeSpec();
-    const memoryGb = ctx.host.cfg.memoryGb;
+    const limits = limitsFor(ctx.host.cfg, ctx.run.size ?? 'standard');
     await ctx.env.ensureImage(ctx.image);
     id = await ctx.env.start({
       ...spec,
       image: ctx.image,
       volume: ctx.run.volume ?? undefined,
       labels: { ...ctx.labels, 'workshop.step': step },
-      cpus: ctx.host.cfg.cpus,
-      memoryMb: memoryGb ? memoryGb * 1024 : undefined,
+      cpus: limits.cpus,
+      memoryMb: limits.memoryGb ? Math.round(limits.memoryGb * 1024) : undefined,
     });
     const startedAt = Date.now();
     setRun(ctx.run.id, { step, container_id: id, step_started_at: startedAt });
@@ -487,7 +487,8 @@ async function runAgent(ctx: Ctx): Promise<boolean> {
   }
   if (state.oomKilled) {
     raiseAlert('warning', 'container-killed', `${ctx.labels['workshop.ticket']}: the ${name} agent ran out of memory on ${ctx.host.name}.`, `run:${r.id}`);
-    throw new Error(`Ran out of memory (limit ${ctx.host.cfg.memoryGb ?? '?'} GB per agent on ${ctx.host.name}).`);
+    const size = r.size ?? 'standard';
+    throw new Error(`Ran out of memory (limit ${limitsFor(ctx.host.cfg, size).memoryGb ?? '?'} GB per ${size} agent on ${ctx.host.name}).`);
   }
   if (hitUsageLimit(claude)) {
     setRun(r.id, { status: 'paused', step: 'run', container_id: null, resets_at: claude.limit?.resetsAt ?? Date.now() + 3600_000, pause_reason: 'limit' });
@@ -831,6 +832,8 @@ export function launch(p: {
   mode: 'normal' | 'delta';
   attempt: number;
   environmentId: number;
+  /** The container size, which picks the host's limits and the slot the run holds. Standard when left out. */
+  size?: AgentSize;
   modelConnectionId: number;
   model: string;
   billing: Billing;
@@ -838,14 +841,15 @@ export function launch(p: {
   const id = crypto.randomUUID();
   try {
     run(
-      `INSERT INTO runs (id, ticket_id, agent, mode, attempt, environment_id, model_connection_id, model, billing, status, volume, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?)`,
+      `INSERT INTO runs (id, ticket_id, agent, mode, attempt, environment_id, size, model_connection_id, model, billing, status, volume, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?)`,
       id,
       p.ticketId,
       p.agent,
       p.mode,
       p.attempt,
       p.environmentId,
+      p.size ?? 'standard',
       p.modelConnectionId,
       p.model,
       p.billing,

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AllowanceView, Limits, Settings } from '../src/api-types.ts';
 import { DEFAULT_SETTINGS } from '../src/settings.ts';
-import { allowanceBlock, clockTopics, thresholdBlock, dependencyBlock, inScope, isTransient, isUnclassified, modeBlock, priorityBlock, pickHost, pickSubscription, publishRetryMinutes, pushEnded, pushRefusal, stepPriority, withinHours } from '../src/scheduler/gates.ts';
+import { allowanceBlock, clockTopics, thresholdBlock, dependencyBlock, inScope, isTransient, isUnclassified, modeBlock, priorityBlock, pickHost, poolFor, freeSlots, pickSubscription, publishRetryMinutes, pushEnded, pushRefusal, stepPriority, withinHours, type HostLoad } from '../src/scheduler/gates.ts';
 
 const s = (over: Partial<Settings> = {}): Settings => ({ ...DEFAULT_SETTINGS, timezone: 'Australia/Melbourne', ...over });
 // 2026-10-13 is a Tuesday. Melbourne is UTC+11 (daylight time) on that date.
@@ -110,12 +110,29 @@ describe('allowance gate', () => {
 
 describe('scheduling helpers', () => {
   it('picks the healthy host with the most free slots', () => {
+    const host = (id: number, slots: number, busy: number, more: Partial<HostLoad> = {}): HostLoad => ({ id, healthy: true, available: true, pools: { standard: { slots, busy } }, ...more });
     expect(pickHost([])).toBeNull();
-    expect(pickHost([{ id: 1, healthy: true, available: true, slots: 1, busy: 1 }])).toBeNull();
-    expect(pickHost([{ id: 1, healthy: false, available: true, slots: 4, busy: 0 }, { id: 2, healthy: true, available: true, slots: 2, busy: 1 }])).toBe(2);
-    expect(pickHost([{ id: 1, healthy: true, available: true, slots: 2, busy: 1 }, { id: 2, healthy: true, available: true, slots: 3, busy: 0 }])).toBe(2);
-    expect(pickHost([{ id: 1, healthy: true, available: false, slots: 4, busy: 0 }])).toBeNull();
-    expect(pickHost([{ id: 1, healthy: true, available: false, slots: 4, busy: 0 }, { id: 2, healthy: true, available: true, slots: 1, busy: 0 }])).toBe(2);
+    expect(pickHost([host(1, 1, 1)])).toBeNull();
+    expect(pickHost([host(1, 4, 0, { healthy: false }), host(2, 2, 1)])).toBe(2);
+    expect(pickHost([host(1, 2, 1), host(2, 3, 0)])).toBe(2);
+    expect(pickHost([host(1, 4, 0, { available: false })])).toBeNull();
+    expect(pickHost([host(1, 4, 0, { available: false }), host(2, 1, 0)])).toBe(2);
+  });
+
+  it('counts slots by agent size on a host that keeps separate ones', () => {
+    const sized: HostLoad = { id: 1, healthy: true, available: true, pools: { standard: { slots: 2, busy: 2 }, small: { slots: 3, busy: 1 }, large: { slots: 1, busy: 1 } } };
+    const plain: HostLoad = { id: 2, healthy: true, available: true, pools: { standard: { slots: 1, busy: 0 } } };
+    expect(freeSlots(sized, 'small')).toBe(2);
+    expect(freeSlots(sized, 'standard')).toBe(0);
+    expect(freeSlots(sized, 'large')).toBe(0);
+    // A size never borrows a standard slot on a host that keeps slots for it.
+    expect(pickHost([sized], 'small')).toBe(1);
+    expect(pickHost([sized], 'standard')).toBeNull();
+    expect(pickHost([sized], 'large')).toBeNull();
+    // A host with one pool runs every size in it.
+    expect(poolFor(plain, 'large')).toBe(plain.pools.standard);
+    expect(pickHost([sized, plain], 'large')).toBe(2);
+    expect(pickHost([sized, plain], 'small')).toBe(1);
   });
 
   it('finishes work in flight first', () => {
