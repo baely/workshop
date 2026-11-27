@@ -539,6 +539,30 @@ describe('code review', () => {
     expect(plan.comment).toBeUndefined();
   });
 
+  it('goes straight to merge, with no pull request, in a repository that pushes to its default branch', () => {
+    const plan = planTransition(reviewCtx('s', { pushToDefault: true }), done([finding({ severity: 'minor' })]));
+    expect(plan.add).toEqual([label.stage('merge')]);
+    expect(plan).toMatchObject({ merge: true, noPr: true, rework: null });
+    expect(plan.openPr).toBeUndefined();
+    expect(plan.comment).toContain('### Code review');
+    expect(plan.comment).toContain('Next: Workshop pushes this to the default branch.');
+  });
+
+  it("waits for you instead of pushing when a rework didn't fix a severe problem", () => {
+    const rework = { count: 1, findings: [finding()] };
+    const plan = planTransition(reviewCtx('s', { rework, pushToDefault: true }), done([finding({ repeat: true })]));
+    expect(plan.add).toEqual([label.stage('merge'), label.needsInfo]);
+    expect(plan.merge).toBeUndefined();
+    expect(plan.comment).toMatch(/^@damiante .*won't push this to the default branch without you/);
+    expect(plan.comment).toContain('Crashes on empty input');
+  });
+
+  it('keeps using a pull request the ticket already has', () => {
+    const plan = planTransition(reviewCtx('s', { pushToDefault: true, hasPr: true }), done([]));
+    expect(plan.add).toEqual([label.stage('pr-review')]);
+    expect(plan.openPr).toBe(true);
+  });
+
   it('holds the PR with needs-info when it would merge without review', () => {
     const rework = { count: 1, findings: [finding()] };
     const plan = planTransition(reviewCtx('s', { rework, mergeWithoutReview: true }), done([finding({ repeat: true })]));

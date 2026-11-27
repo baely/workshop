@@ -2,6 +2,7 @@ import { App, Octokit } from 'octokit';
 import type { Installation, ProviderInfo } from '../../api-types.ts';
 import { imageKey, isGitHubImageUrl } from '../../workflow/media.ts';
 import type {
+  BranchState,
   GitAccess,
   ImageRef,
   LabelDef,
@@ -533,6 +534,42 @@ export class GitHubApp implements VcsHost, TicketSource {
       if ([405, 409, 422].includes(status(err) ?? 0)) return { merged: false, message: (err as Error).message };
       throw err;
     }
+  }
+
+  async branchState(repo: RepoRef, branch: string): Promise<BranchState> {
+    const kit = await this.kit(repo);
+    const { data } = await kit.request('GET /repos/{owner}/{repo}/compare/{basehead}', { ...split(repo), basehead: `${repo.defaultBranch}...${branch}`, per_page: 100 });
+    return { ahead: data.ahead_by, behind: data.behind_by, subjects: data.commits.map((c) => c.commit.message.split('\n')[0]) };
+  }
+
+  async mergeDefaultInto(repo: RepoRef, branch: string) {
+    const kit = await this.kit(repo);
+    try {
+      await kit.request('POST /repos/{owner}/{repo}/merges', { ...split(repo), base: branch, head: repo.defaultBranch });
+      return 'merged' as const;
+    } catch (err) {
+      if (status(err) === 409) return 'conflict' as const;
+      throw err;
+    }
+  }
+
+  async pushToDefault(repo: RepoRef, branch: string, message: string) {
+    const kit = await this.kit(repo);
+    const tip = async (name: string) => (await kit.request('GET /repos/{owner}/{repo}/git/ref/{ref}', { ...split(repo), ref: `heads/${name}` })).data.object.sha;
+    const [base, head] = [await tip(repo.defaultBranch), await tip(branch)];
+    // The commit takes the branch's files as they are, so the branch must already hold everything on the default branch.
+    const { data: gap } = await kit.request('GET /repos/{owner}/{repo}/compare/{basehead}', { ...split(repo), basehead: `${base}...${head}`, per_page: 1 });
+    if (gap.behind_by > 0) return { ok: false as const, message: `${repo.defaultBranch} has commits ${branch} doesn't.` };
+    const { data: commit } = await kit.request('GET /repos/{owner}/{repo}/git/commits/{commit_sha}', { ...split(repo), commit_sha: head });
+    const { data: made } = await kit.request('POST /repos/{owner}/{repo}/git/commits', { ...split(repo), message, tree: commit.tree.sha, parents: [base] });
+    try {
+      // Not forced: if the default branch moved meanwhile this is refused, and the next try starts over.
+      await kit.request('PATCH /repos/{owner}/{repo}/git/refs/{ref}', { ...split(repo), ref: `heads/${repo.defaultBranch}`, sha: made.sha, force: false });
+    } catch (err) {
+      if ([403, 409, 422].includes(status(err) ?? 0)) return { ok: false as const, message: (err as Error).message };
+      throw err;
+    }
+    return { ok: true as const, sha: made.sha, url: made.html_url };
   }
 
   async mergeRules(repo: RepoRef): Promise<MergeRules> {

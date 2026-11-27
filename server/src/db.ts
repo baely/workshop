@@ -269,6 +269,10 @@ export const MIGRATIONS = [
   ALTER TABLE repos ADD COLUMN raise_tickets INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE tickets ADD COLUMN raised TEXT; -- JSON: the tickets opened from this one's runs
   `,
+  // Per-repository: land finished work on the default branch itself, with no pull request.
+  `
+  ALTER TABLE repos ADD COLUMN push_to_default INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export let db: DatabaseSync;

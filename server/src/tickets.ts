@@ -24,6 +24,7 @@ export interface RepoRow {
   selection: RepoSelection;
   merge_without_review: number;
   raise_tickets: number;
+  push_to_default: number;
   merge_warning: string | null;
 }
 
@@ -139,6 +140,7 @@ export function repoView(r: RepoRow): RepoView {
     mergeWithoutReview: Boolean(r.merge_without_review),
     mergeWarning: r.merge_without_review ? r.merge_warning : null,
     raiseTickets: Boolean(r.raise_tickets),
+    pushToDefault: Boolean(r.push_to_default),
   };
 }
 

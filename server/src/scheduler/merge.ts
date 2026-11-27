@@ -81,6 +81,47 @@ export function mergeWithoutReviewVerdict(branch: string, rules: MergeRules): { 
   return { warning: warnings.join(' ') || null };
 }
 
+/** The one commit's message: the branch's first commit says what the work is, in the repository's own style. */
+export function pushMessage(t: { number: number; title: string }, subjects: string[]): string {
+  const own = subjects.filter((s) => !/^Merge (remote-tracking )?branch /.test(s));
+  const first = own[0] ?? t.title;
+  const subject = new RegExp(`#${t.number}\\b`).test(first) ? first : `${first} (#${t.number})`;
+  const rest = own.slice(1).map((s) => `- ${s}`);
+  return rest.length ? `${subject}\n\n${rest.join('\n')}` : subject;
+}
+
+/**
+ * In a repository that takes work straight on its default branch: brings the ticket's branch up to date, then
+ * puts its files on the default branch as one commit and finishes the ticket. No pull request is involved.
+ */
+async function pushToDefault(t: TicketRow): Promise<'merged' | 'agent' | 'waiting'> {
+  const repo = getRepo(t.repo_id)!;
+  const vcs = vcsFor(repo);
+  const ref = repoRef(repo);
+  const branch = branchOf(t);
+  const state = await vcs.branchState(ref, branch);
+  if (state.ahead === 0) {
+    await sourceFor(repo).comment(ref, t.number, `Nothing to push: \`${branch}\` has no changes that aren't already on \`${repo.default_branch}\`.`);
+    await finishMerged(t);
+    return 'merged';
+  }
+  if (state.behind > 0) {
+    // The Merge agent starts on tickets whose status is 'conflict'.
+    const merged = await vcs.mergeDefaultInto(ref, branch);
+    setPrStatus(t, merged === 'conflict' ? 'conflict' : 'behind');
+    return merged === 'conflict' ? 'agent' : 'waiting';
+  }
+  const pushed = await vcs.pushToDefault(ref, branch, pushMessage(t, state.subjects));
+  if (!pushed.ok) {
+    setPrStatus(t, 'blocked');
+    raiseAlert('warning', 'merge-failed', `Couldn't push ${repo.full_name}#${t.number} to ${repo.default_branch}: ${pushed.message}`, `ticket:${t.id}`);
+    return 'waiting';
+  }
+  await sourceFor(repo).comment(ref, t.number, `Workshop pushed this to \`${repo.default_branch}\` as [\`${pushed.sha.slice(0, 7)}\`](${pushed.url}).`);
+  await finishMerged(t);
+  return 'merged';
+}
+
 /**
  * Moves an approved ticket (or any, with merge without review) towards merged without an LLM where possible.
  * Returns 'agent' when only the Merge agent can help (conflicts).
@@ -90,6 +131,7 @@ export async function advanceMerge(t: TicketRow): Promise<'merged' | 'agent' | '
   const vcs = vcsFor(repo);
   const ref = repoRef(repo);
   const number = t.pr_number ?? (await vcs.findPullRequest(ref, branchOf(t)));
+  if (!number && repo.push_to_default) return pushToDefault(t);
   if (!number) {
     await editLabels(t, [], moveTo(labelsOf(t), null).remove);
     raiseAlert('warning', 'merge-no-pr', `${repo.full_name}#${t.number} was marked for merge but has no pull request.`, `ticket:${t.id}`);
