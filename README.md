@@ -113,6 +113,11 @@ Once the App is installed, the **Repositories** list shows every repository it c
 
 **Merge without review** (off by default) merges each pull request as soon as GitHub allows it, without waiting for your approval: useful for letting a batch of tickets run overnight on a new project. Workshop still opens the pull request and requests your review, and requesting changes before it merges still sends the ticket back. Turning it on is refused if the default branch requires an approving review, since the App can't approve its own pull requests. Make CI a required status check first, or failing CI won't stop a merge.
 
+**Agents open tickets for what they notice** (off by default) lets an agent report a real problem it comes across outside its ticket (a bug somewhere else, something already broken, a follow-up the change makes necessary) instead of fixing it there or ignoring it. Workshop opens a ticket for each, labelled `workshop/raised`, with a note saying which ticket it came from, and lists them in its comment on that ticket.
+- At most three per run. One whose title an open ticket already has is left out.
+- In a repository set to nominated tickets, the new tickets wait until you nominate them. In one that works on all open tickets, they're picked up like any other.
+- Agents working on a `workshop/raised` ticket aren't asked, so noticed work can't keep producing more.
+
 ### 5. Settings
 
 - **Ticket authors:** Workshop only works on issues opened by these GitHub users, and leaves other people's comments out of what agents read. Keep this to yourself on public repositories.
