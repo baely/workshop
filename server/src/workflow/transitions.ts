@@ -15,8 +15,10 @@ export interface Plan {
   publish?: boolean;
   /** Open (or update) the pull request and request review. */
   openPr?: boolean;
-  /** Try to merge the pull request. */
+  /** Try to merge the pull request, or push the work to the default branch. */
   merge?: boolean;
+  /** The work lands without a pull request: forget the Implementation result kept for one. */
+  noPr?: boolean;
   /** Store the Classifier's `ui` flag on the ticket. */
   ui?: boolean;
   /** Delete the ticket's media store: the ticket won't be worked on. */
@@ -54,6 +56,10 @@ export interface PlanContext {
   handoffRunId?: string;
   /** The repository merges pull requests without waiting for an approval. */
   mergeWithoutReview: boolean;
+  /** The repository takes reviewed work straight on its default branch, with no pull request. Undefined is off. */
+  pushToDefault?: boolean;
+  /** The ticket already has a pull request (opened before the setting was turned on): it keeps using it. */
+  hasPr?: boolean;
 }
 
 const NEXT_TEXT = { implement: 'implementation', design: 'design', 'design-review': 'design review' } as const;
@@ -177,6 +183,19 @@ function planReview(ctx: PlanContext, r: ReviewResult): Plan {
     };
   }
   const exhausted = target !== null;
+  if (ctx.pushToDefault && !ctx.hasPr) {
+    const move = moveTo(ctx.labels, 'merge');
+    const notes = reviewSection(r, exhausted);
+    if (!exhausted) return { ...move, rework: null, noPr: true, merge: true, comment: `${notes}\n\nNext: Workshop pushes this to the default branch.` };
+    // Nothing else stops a push, so severe problems that remain wait for you.
+    return {
+      ...move,
+      add: [...move.add, label.needsInfo],
+      rework: null,
+      noPr: true,
+      comment: `@${ctx.author} The code review still found severe problems after Workshop's rework, so it won't push this to the default branch without you.\n\n${notes}\n\nRemove the \`${label.needsInfo}\` label to push it as it is, or say what to change in a comment and move the ticket back to implementation.`,
+    };
+  }
   const hold = exhausted && ctx.mergeWithoutReview;
   const move = moveTo(ctx.labels, 'pr-review');
   return {

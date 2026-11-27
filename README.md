@@ -113,6 +113,12 @@ Once the App is installed, the **Repositories** list shows every repository it c
 
 **Merge without review** (off by default) merges each pull request as soon as GitHub allows it, without waiting for your approval: useful for letting a batch of tickets run overnight on a new project. Workshop still opens the pull request and requests your review, and requesting changes before it merges still sends the ticket back. Turning it on is refused if the default branch requires an approving review, since the App can't approve its own pull requests. Make CI a required status check first, or failing CI won't stop a merge.
 
+**Push to the default branch, no pull request** (off by default) is for repositories that don't use pull requests. Once the code review passes, Workshop brings the ticket's branch up to date and puts its files on the default branch as one commit, comments the commit on the issue, closes it and deletes the branch. Nothing waits for you, and CI isn't waited for either: the Code reviewer's own test run is the check.
+- The commit message is the first line of the branch's first commit, so it follows the repository's own style, with the ticket number added (`… (#12)`); later commits are listed underneath.
+- If the default branch has moved on, Workshop merges it into the ticket's branch first; a conflict goes to the Merge agent.
+- Severe problems that survive a rework hold the ticket with `workshop/needs-info` and a comment listing them. Remove the label to push it as it is.
+- A ticket that already has a pull request keeps using it. A rule on the default branch that refuses the push raises an alert.
+
 ### 5. Settings
 
 - **Ticket authors:** Workshop only works on issues opened by these GitHub users, and leaves other people's comments out of what agents read. Keep this to yourself on public repositories.

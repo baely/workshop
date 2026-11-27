@@ -112,6 +112,12 @@ export interface MergeRules {
   unknown: string[];
 }
 
+export interface BranchState {
+  ahead: number;
+  behind: number;
+  subjects: string[];
+}
+
 /** Version-control host (GitHub first). */
 export interface VcsHost {
   listRepos(): Promise<RepoRef[]>;
@@ -135,6 +141,12 @@ export interface VcsHost {
   /** Merge the base branch into the PR branch server-side (no conflicts). */
   updateBranch(repo: RepoRef, number: number): Promise<void>;
   merge(repo: RepoRef, number: number): Promise<{ merged: boolean; message?: string }>;
+  /** How `branch` stands against the default branch, with the first line of each of its own commits, oldest first. */
+  branchState(repo: RepoRef, branch: string): Promise<BranchState>;
+  /** Merge the default branch into `branch` server-side. */
+  mergeDefaultInto(repo: RepoRef, branch: string): Promise<'merged' | 'conflict'>;
+  /** Put `branch`'s files on the default branch as one commit. Refused (`ok: false`) unless `branch` holds everything on the default branch. */
+  pushToDefault(repo: RepoRef, branch: string, message: string): Promise<{ ok: true; sha: string; url: string } | { ok: false; message: string }>;
   /** The rules on the default branch that affect merging. */
   mergeRules(repo: RepoRef): Promise<MergeRules>;
 }

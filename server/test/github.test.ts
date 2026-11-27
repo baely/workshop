@@ -247,3 +247,37 @@ describe('GitHub App reviews', () => {
     expect((await app.pullRequestState(repo, 5, ['me'])).decision).toBeNull();
   });
 });
+
+describe('GitHub pushToDefault', () => {
+  const main = { fullName: 'me/app', defaultBranch: 'main' } as Parameters<GitHubApp['pushToDefault']>[0];
+  function gh(opts: { behind?: number; refuse?: number }) {
+    const app = new GitHubApp({ appId: 1, slug: 'workshop', owner: 'me', htmlUrl: '', installations: [1] }, { privateKey: 'unused' });
+    const request = vi.fn(async (route: string, params: { ref?: string }) => {
+      if (route.startsWith('GET /repos/{owner}/{repo}/git/ref/')) return { data: { object: { sha: params.ref === 'heads/main' ? 'base' : 'head' } } };
+      if (route.includes('/compare/')) return { data: { behind_by: opts.behind ?? 0 } };
+      if (route.startsWith('GET /repos/{owner}/{repo}/git/commits/')) return { data: { tree: { sha: 'tree' } } };
+      if (route.startsWith('POST /repos/{owner}/{repo}/git/commits')) return { data: { sha: 'new', html_url: 'https://github.com/me/app/commit/new' } };
+      if (route.startsWith('PATCH') && opts.refuse) throw Object.assign(new Error('Update is not a fast forward'), { status: opts.refuse });
+      return { data: {} };
+    });
+    vi.spyOn(app as unknown as { kit: () => unknown }, 'kit').mockResolvedValue({ request });
+    return { app, request };
+  }
+
+  it("commits the branch's files on top of the default branch and moves it there without forcing", async () => {
+    const { app, request } = gh({});
+    await expect(app.pushToDefault(main, 'workshop/1-x', 'app: fix (#1)')).resolves.toEqual({ ok: true, sha: 'new', url: 'https://github.com/me/app/commit/new' });
+    expect(request).toHaveBeenCalledWith('POST /repos/{owner}/{repo}/git/commits', expect.objectContaining({ message: 'app: fix (#1)', tree: 'tree', parents: ['base'] }));
+    expect(request).toHaveBeenCalledWith('PATCH /repos/{owner}/{repo}/git/refs/{ref}', expect.objectContaining({ ref: 'heads/main', sha: 'new', force: false }));
+  });
+
+  it("refuses a branch that lacks commits from the default branch, since its files would undo them", async () => {
+    const { app, request } = gh({ behind: 2 });
+    await expect(app.pushToDefault(main, 'workshop/1-x', 'm')).resolves.toMatchObject({ ok: false });
+    expect(request).not.toHaveBeenCalledWith(expect.stringMatching(/^(POST|PATCH)/), expect.anything());
+  });
+
+  it('reports a refused update instead of throwing', async () => {
+    await expect(gh({ refuse: 422 }).app.pushToDefault(main, 'workshop/1-x', 'm')).resolves.toEqual({ ok: false, message: 'Update is not a fast forward' });
+  });
+});

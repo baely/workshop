@@ -29,6 +29,7 @@ const { connectionPaused, drive, isDriving, launch, PAUSE_GRACE_MS, requestPause
 const { buildQueue, forgetProbe, hostLoads, launchNow, mergeApproved, probeAllowance, reattachRuns, refreshNow, resumeNow, resumePaused, settleManual } = await import('../src/scheduler/loop.ts');
 const { setBypassLimits, setPrioritised, setPush, getTicket, ticketView, getRepo } = await import('../src/tickets.ts');
 const { syncRepo, HELD_CHECKS_PER_SYNC } = await import('../src/scheduler/sync.ts');
+const { pushMessage } = await import('../src/scheduler/merge.ts');
 const { getSettings, saveSettings } = await import('../src/settings.ts');
 const { label } = await import('../src/workflow/labels.ts');
 
@@ -2340,6 +2341,82 @@ describe('merge step', () => {
     fake.vcs.pullRequestState = vi.fn(async () => pr({}));
     await mergeApproved(false);
     expect(fake.vcs.merge).toHaveBeenCalledWith(expect.anything(), 7);
+  });
+});
+
+describe('pushing to the default branch', () => {
+  const labels = () => JSON.parse(getTicket(1)!.labels);
+  const state = (ahead: number, behind: number, subjects = ['app: fix the thing', 'Address the review']) => vi.fn(async () => ({ ahead, behind, subjects }));
+
+  beforeEach(() => {
+    run("UPDATE tickets SET pr_number = NULL, pr_status = NULL, state = 'open', labels = ? WHERE id = 1", JSON.stringify([label.size('s'), label.stage('merge')]));
+    run('UPDATE repos SET push_to_default = 1 WHERE id = 1');
+    fake.vcs.pushToDefault = vi.fn(async () => ({ ok: true, sha: 'abcdef1234', url: 'https://github.com/me/app/commit/abcdef1234' }));
+    fake.vcs.mergeDefaultInto = vi.fn(async () => 'merged');
+    fake.vcs.branchState = state(2, 0);
+  });
+  afterEach(() => run('UPDATE repos SET push_to_default = 0 WHERE id = 1'));
+
+  it('pushes an up-to-date branch as one commit, says so on the ticket and finishes it', async () => {
+    await mergeApproved(false);
+    expect(fake.vcs.pushToDefault).toHaveBeenCalledWith(expect.anything(), expect.stringMatching(/^workshop\/3-/), 'app: fix the thing (#3)\n\n- Address the review');
+    expect(fake.tickets.comment).toHaveBeenCalledWith(expect.anything(), 3, expect.stringContaining('pushed this to `main` as [`abcdef1`]'));
+    expect(fake.vcs.openPullRequest).not.toHaveBeenCalled();
+    expect(getTicket(1)).toMatchObject({ state: 'closed', pr_status: 'merged' });
+    expect(labels()).not.toContain(label.stage('merge'));
+  });
+
+  it('brings a branch that is behind up to date first, and pushes on a later check', async () => {
+    fake.vcs.branchState = state(2, 3);
+    await mergeApproved(false);
+    expect(fake.vcs.mergeDefaultInto).toHaveBeenCalled();
+    expect(fake.vcs.pushToDefault).not.toHaveBeenCalled();
+    expect(getTicket(1)).toMatchObject({ state: 'open', pr_status: 'behind' });
+  });
+
+  it('leaves a conflict to the Merge agent', async () => {
+    fake.vcs.branchState = state(2, 3);
+    fake.vcs.mergeDefaultInto = vi.fn(async () => 'conflict');
+    await mergeApproved(false);
+    expect(fake.vcs.pushToDefault).not.toHaveBeenCalled();
+    expect(getTicket(1)!.pr_status).toBe('conflict');
+    expect(labels()).toContain(label.stage('merge'));
+  });
+
+  it('raises an alert and tries again later when the push is refused', async () => {
+    fake.vcs.pushToDefault = vi.fn(async () => ({ ok: false, message: 'Protected branch update failed' }));
+    await mergeApproved(false);
+    expect(getTicket(1)).toMatchObject({ state: 'open', pr_status: 'blocked' });
+    expect(one<{ message: string }>("SELECT message FROM alerts WHERE kind = 'merge-failed' ORDER BY id DESC")!.message).toContain("Couldn't push me/app#3 to main: Protected branch update failed");
+  });
+
+  it('finishes a ticket whose branch has nothing new', async () => {
+    fake.vcs.branchState = state(0, 0, []);
+    await mergeApproved(false);
+    expect(fake.vcs.pushToDefault).not.toHaveBeenCalled();
+    expect(getTicket(1)!.state).toBe('closed');
+  });
+
+  it('still merges the pull request of a ticket that has one', async () => {
+    run('UPDATE tickets SET pr_number = 7 WHERE id = 1');
+    fake.vcs.pullRequestState = vi.fn(async () => ({ number: 7, url: 'u', state: 'open', headSha: 'abc', mergeable: 'clean', decision: 'approved' }));
+    fake.vcs.merge = vi.fn(async () => ({ merged: true }));
+    await mergeApproved(false);
+    expect(fake.vcs.merge).toHaveBeenCalledWith(expect.anything(), 7);
+    expect(fake.vcs.pushToDefault).not.toHaveBeenCalled();
+  });
+});
+
+describe('the pushed commit message', () => {
+  const t = { number: 12, title: 'Fix the thing' };
+  it("uses the branch's first commit and names the ticket once", () => {
+    expect(pushMessage(t, ['app: fix the thing'])).toBe('app: fix the thing (#12)');
+    expect(pushMessage(t, ['app: fix the thing (#12)'])).toBe('app: fix the thing (#12)');
+    expect(pushMessage(t, ['app: fix #123'])).toBe('app: fix #123 (#12)');
+  });
+  it('lists later commits, leaves out merges, and falls back to the ticket title', () => {
+    expect(pushMessage(t, ['app: fix the thing', "Merge branch 'main' into workshop/12-fix", 'Address the review'])).toBe('app: fix the thing (#12)\n\n- Address the review');
+    expect(pushMessage(t, [])).toBe('Fix the thing (#12)');
   });
 });
 

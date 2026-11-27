@@ -264,6 +264,10 @@ export const MIGRATIONS = [
   `,
   `ALTER TABLE tickets ADD COLUMN blockers_checked_at INTEGER; -- last read of a held ticket's blockers, for the rotation`,
   `ALTER TABLE tickets ADD COLUMN bypass_limits INTEGER NOT NULL DEFAULT 0; -- you let it run past your subscription limits; cleared when it closes`,
+  // Per-repository: land finished work on the default branch itself, with no pull request.
+  `
+  ALTER TABLE repos ADD COLUMN push_to_default INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export let db: DatabaseSync;

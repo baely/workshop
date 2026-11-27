@@ -121,6 +121,20 @@ Turning **Merge without review** on checks the rules on the repository's default
 
 The warning is saved when the setting is turned on and shown under the repository's settings. Rules changed later on GitHub aren't checked again; turn the setting off and on to check them.
 
+## Pushing to the default branch
+
+A repository with **Push to the default branch, no pull request** on has no pull request and no review stage. `planReview` sends a passed review to `stage:merge` with the review as a comment on the issue (`pushToDefault` in the plan's context), and `advanceMerge` hands a ticket with no pull request to `pushToDefault` in `scheduler/merge.ts`:
+
+| The ticket's branch | Workshop does |
+|---|---|
+| has nothing the default branch lacks | Comment, close the issue, clear the labels |
+| lacks commits from the default branch | Merge the default branch into it on GitHub, then wait for the next check |
+| conflicts with the default branch | Run the Merge agent (the ticket's status becomes `conflict`); after its push, try again |
+| holds everything on the default branch | Create one commit with the branch's files on top of the default branch, move the default branch to it (never forced), comment the commit, close the issue, delete the branch |
+| the move is refused (a branch rule, or the default branch moved meanwhile) | Raise a `merge-failed` alert and try again on the next check |
+
+The commit's message is `pushMessage()`: the first line of the branch's first commit plus `(#n)`, then the later commits as a list. Severe findings that remain after a rework add `workshop/needs-info` instead of pushing; removing it pushes. A ticket that already has a pull request (the setting was turned on later) finishes through the pull request.
+
 ## Nominated tickets only
 
 Each repository has a "Tickets to work on" setting: all open tickets or only nominated ones (the default for newly enrolled repositories; repositories already on keep their setting). In a nominated-only repository, Workshop still syncs every ticket from an allowed author, but queues, merges and pushes only those with `workshop/nominated`. Add the label on GitHub or press Nominate on the Tickets page. Removing the label doesn't stop a run already in progress; it finishes its stage, then the ticket isn't picked up again. The author allowlist still applies.

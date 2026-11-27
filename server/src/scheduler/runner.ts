@@ -601,6 +601,8 @@ async function publishRun(ctx: Ctx) {
         rework,
         handoffRunId: handoffOf(t)?.runId,
         mergeWithoutReview: Boolean(ctx.repo.merge_without_review),
+        pushToDefault: Boolean(ctx.repo.push_to_default),
+        hasPr: t.pr_number !== null,
       },
       result,
     );
@@ -731,7 +733,7 @@ async function publishRun(ctx: Ctx) {
   const comment = plan.comment;
   if (comment) await step('comment', () => sourceFor(ctx.repo).comment(repo, t.number, comment));
   // The handoff goes last too, so a retry after a partial failure still has the Implementation summary.
-  run(`UPDATE tickets SET failures = 0${plan.rework === null ? ', rework = NULL' : ''}${plan.openPr ? ', handoff = NULL' : ''} WHERE id = ?`, t.id);
+  run(`UPDATE tickets SET failures = 0${plan.rework === null ? ', rework = NULL' : ''}${plan.openPr || plan.noPr ? ', handoff = NULL' : ''} WHERE id = ?`, t.id);
   setRun(r.id, { status: 'succeeded', step: null, container_id: null, ended_at: Date.now(), error: null, publish_retry_at: null });
   if (r.volume) await ctx.env.removeVolume(r.volume).then(() => setRun(r.id, { volume: null }), () => {});
   if (plan.merge) {
