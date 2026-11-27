@@ -145,6 +145,50 @@ describe('usageHistory', () => {
     expect(h.byModel[0].points.map((p) => p.runs)).toEqual([1, 0, 0, 1, 0]);
   });
 
+  it('gives the last 24 hours by the hour on the settings clock', () => {
+    run('DELETE FROM spend');
+    ins('a', '2026-11-26T11:10:00Z');
+    ins('a', '2026-11-26T11:50:00Z'); // resumed in the same hour
+    ins('b', '2026-11-25T12:30:00Z'); // the oldest hour
+    ins('old', '2026-11-25T11:59:00Z'); // just outside
+    const h = usageHistory('24h', 'Australia/Melbourne', Date.parse('2026-11-26T11:55:00Z'));
+    expect(h.bucket).toBe('hour');
+    expect(h.buckets).toHaveLength(24);
+    expect(h.buckets[0]).toBe('2026-11-25T23');
+    expect(h.buckets[23]).toBe('2026-11-26T22');
+    const [s] = h.byBilling;
+    expect(s.points[0]).toMatchObject({ runs: 1, costUsd: 1 });
+    expect(s.points[23]).toMatchObject({ runs: 1, costUsd: 2 });
+    expect(s.totals).toMatchObject({ runs: 2, costUsd: 3 });
+  });
+
+  it('folds the hour a clock change repeats into one bucket', () => {
+    run('DELETE FROM spend');
+    // Europe/London leaves summer time at 01:00 UTC on 25 October 2026: 01:00 to 02:00 local happens twice.
+    const h = usageHistory('24h', 'Europe/London', Date.parse('2026-10-25T12:00:00Z'));
+    expect(h.buckets).toHaveLength(23);
+    expect(new Set(h.buckets).size).toBe(23);
+    expect(h.buckets.at(-1)).toBe('2026-10-25T12');
+  });
+
+  it('lists what each ticket used, the most expensive first, and leaves out spend without a ticket', () => {
+    run('DELETE FROM spend');
+    const forTicket = (runId: string, number: number | null, cost: number, repo = 'me/app') => {
+      ins(runId, '2026-11-25T10:00:00Z', { cost, repo });
+      run('UPDATE spend SET ticket = ? WHERE run_id = ?', number, runId);
+    };
+    forTicket('a', 7, 1);
+    forTicket('b', 7, 2);
+    forTicket('c', 99, 5, 'me/gone');
+    forTicket('d', null, 9);
+    const h = usageHistory('7d', 'UTC', Date.parse('2026-11-26T12:00:00Z'));
+    expect(h.byTicket).toEqual([
+      { repo: 'me/gone', number: 99, title: null, url: null, runs: 1, inputTokens: 10, outputTokens: 1, costUsd: 5 },
+      { repo: 'me/app', number: 7, title: 't', url: 'u', runs: 2, inputTokens: 20, outputTokens: 2, costUsd: 3 },
+    ]);
+    expect(usageHistory('24h', 'UTC', Date.parse('2026-11-28T12:00:00Z')).byTicket).toEqual([]);
+  });
+
   it('sorts series by cost and names unknown projects and connections', () => {
     run('DELETE FROM spend');
     const conn = Number(run("INSERT INTO connections (kind, provider, name, config, created_at, updated_at) VALUES ('model', 'anthropic', 'Claude-3', '{}', 0, 0)").lastInsertRowid);

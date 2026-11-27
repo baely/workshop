@@ -46,12 +46,14 @@ describe('bucketLabel', () => {
     expect(bucketLabel('2026-11-26', 'day', 'en-GB')).toBe('26 Nov');
     expect(bucketLabel('2026-11', 'month', 'en-GB')).toBe('Nov 2026');
     expect(bucketLabel('2026-01-01', 'day', 'en-GB')).toBe('1 Jan');
+    expect(bucketLabel('2026-11-26T09', 'hour', 'en-GB')).toBe('09:00');
   });
 });
 
 describe('readFilters', () => {
   it('reads the filters', () => {
     expect(readFilters(new URLSearchParams('range=7d&group=model&show=tokens'))).toEqual({ range: '7d', group: 'model', metric: 'tokens' });
+    expect(readFilters(new URLSearchParams('range=24h')).range).toBe('24h');
   });
 
   it('falls back for missing and unknown values', () => {

@@ -67,6 +67,7 @@ const schemas: Record<string, Schema> = {
     byConnection: array({ allOf: [ref('SpendTotals'), object({ connectionId: nullable(int), connection: nullable(str), billing: str })] }),
     byMonth: array({ allOf: [ref('SpendTotals'), object({ month: str })] }),
   }),
+  TicketSpend: object({ repo: str, number: int, title: nullable(str), url: nullable(str), runs: int, inputTokens: int, outputTokens: int, costUsd: num }),
   SpendSeries: object({ key: str, name: str, points: array(ref('SpendTotals')), totals: ref('SpendTotals') }),
   WindowProjection: object({ pct: num, resetsAt: int, ratePerHour: num, limitAt: nullable(int), fullAt: nullable(int), over: bool }),
   Burn: object({ usd: num, tokens: num }),
@@ -105,13 +106,14 @@ const schemas: Record<string, Schema> = {
     burn: ref('BurnRate'),
   }),
   UsageHistory: object({
-    range: enumOf('7d', '30d', '90d', 'all'),
-    bucket: enumOf('day', 'month'),
+    range: enumOf('24h', '7d', '30d', '90d', 'all'),
+    bucket: enumOf('hour', 'day', 'month'),
     buckets: array(str),
     byBilling: array(ref('SpendSeries')),
     byModel: array(ref('SpendSeries')),
     byProject: array(ref('SpendSeries')),
     byConnection: array(ref('SpendSeries')),
+    byTicket: array(ref('TicketSpend')),
     allowance: array(ref('AllowanceHistory')),
     projection: object({
       api: object({ todayUsd: num, dailyCapUsd: num, capAt: nullable(int), perDayUsd: num, monthToDateUsd: num, monthEndUsd: num, burn: ref('BurnRate') }),
@@ -295,8 +297,8 @@ const paths: Record<string, Record<string, Op>> = {
   '/usage/history': {
     get: {
       summary:
-        "Token use and token-equivalent cost over time (days, or months for all time), as one series per billing, model, project and connection, plus each subscription's readings over the last 7 days and projections: when each usage window reaches your limit, when API spend reaches the daily limit, and month-end totals.",
-      query: { range: '7d, 30d (the default), 90d or all.' },
+        "Token use and token-equivalent cost over time (hours for the last 24 hours, days, or months for all time), as one series per billing, model, project and connection, the tickets that used the most, plus each subscription's readings over the last 7 days and projections: when each usage window reaches your limit, when API spend reaches the daily limit, and month-end totals.",
+      query: { range: '24h, 7d, 30d (the default), 90d or all.' },
       ok: ref('UsageHistory'),
       errors: [400],
     },
