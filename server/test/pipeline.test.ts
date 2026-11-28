@@ -107,6 +107,7 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+  publish('tickets'); // tests write rows directly, so drop the cached priority graph
   run("UPDATE tickets SET labels = ?, failures = 0, pr_number = NULL, blocked_by = '[]', push = NULL, push_stage = NULL, branch = NULL, state = 'open', pr_status = NULL, rescue = NULL, handoff = NULL, rework = NULL, prioritised = 0, bypass_limits = 0 WHERE id = 1", JSON.stringify([label.size('s'), label.stage('implement')]));
   run('DELETE FROM runs');
   fake.models = { launchEnv: () => ({ CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-test' }), billing: () => ['subscription'], models: () => [] };
