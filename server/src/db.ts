@@ -317,6 +317,10 @@ export const MIGRATIONS = [
   ALTER TABLE agent_classes ADD COLUMN prompt_base TEXT;
   ALTER TABLE agent_classes ADD COLUMN prompt_alerted TEXT; -- sha256 of the default last raised as an alert
   `,
+  `
+  ALTER TABLE repos ADD COLUMN rework_on TEXT NOT NULL DEFAULT 'severe'; -- severe, moderate or minor: the lowest code review severity that sends a ticket back
+  ALTER TABLE tickets ADD COLUMN follow_ups TEXT; -- JSON: code review findings to open as tickets once the work is pushed to the default branch
+  `,
 ];
 
 export let db: DatabaseSync;

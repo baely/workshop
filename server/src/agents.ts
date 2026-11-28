@@ -57,7 +57,7 @@ export function agentViews(): AgentClassView[] {
       customised: row.prompt !== null,
       defaultBefore: row.prompt !== null && row.prompt_base !== null && row.prompt_base !== DEFAULT_PROMPTS[name] ? row.prompt_base : null,
       defaultUnknown: row.prompt !== null && row.prompt_base === null,
-      protocol: protocolText({ branch: 'workshop/<number>-<title>', base: '<default branch>', publishes: publishes(name) }),
+      protocol: protocolText({ branch: 'workshop/<number>-<title>', base: '<default branch>', publishes: publishes(name), review: name === 'code-review' ? 'severe' : undefined }),
       maxTurns: row.max_turns,
       timeoutMin: row.timeout_min,
     };
