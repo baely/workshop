@@ -24,6 +24,8 @@ export interface RepoRow {
   selection: RepoSelection;
   merge_without_review: number;
   raise_tickets: number;
+  /** Work on tickets whoever opened them, not only the authors in Settings. */
+  any_author: number;
   push_to_default: number;
   rework_on: ReworkOn;
   merge_warning: string | null;
@@ -284,6 +286,7 @@ export function repoView(r: RepoRow): RepoView {
     mergeWithoutReview: Boolean(r.merge_without_review),
     mergeWarning: r.merge_without_review ? r.merge_warning : null,
     raiseTickets: Boolean(r.raise_tickets),
+    anyAuthor: Boolean(r.any_author),
     pushToDefault: Boolean(r.push_to_default),
     reworkOn: r.rework_on,
   };
@@ -301,8 +304,12 @@ export function sourceFor(repo: RepoRow) {
   return ticketsOf(conn);
 }
 
-/** Whether Workshop works on tickets by `login`: the authors you allow, plus Workshop's own GitHub App, which opens tickets like Set up agent image. */
-export function isAllowedAuthor(login: string) {
+/**
+ * Whether Workshop works on tickets by `login`: the authors you allow, plus Workshop's own GitHub App, which opens
+ * tickets like Set up agent image. With `repo`, also anyone at all when that repository takes tickets from any author.
+ */
+export function isAllowedAuthor(login: string, repo?: Pick<RepoRow, 'any_author'>) {
+  if (repo?.any_author) return true;
   const l = login.toLowerCase();
   if (getSettings().authors.some((a) => a.toLowerCase() === l)) return true;
   const apps = all<{ config: string }>("SELECT config FROM connections WHERE kind = 'vcs' AND provider = 'github'");

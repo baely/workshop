@@ -57,7 +57,7 @@ export async function syncRepo(repo: RepoRow) {
 /** Upserts the listed tickets, stopping runs on tickets that were closed or skipped, and tidies up closed ones. */
 async function storeChanged(repo: RepoRow, changed: RemoteTicket[], checking: number[]) {
   for (const t of changed) {
-    if (!isAllowedAuthor(t.author)) continue;
+    if (!isAllowedAuthor(t.author, repo)) continue;
     const existing = one<TicketRow>('SELECT * FROM tickets WHERE repo_id = ? AND number = ?', repo.id, t.number);
     // Removing workshop/failed is how you ask Workshop to try again.
     const retry = existing && labelsOf(existing).includes(label.failed) && !t.labels.includes(label.failed);

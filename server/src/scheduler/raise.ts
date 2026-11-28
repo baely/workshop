@@ -24,7 +24,7 @@ export const score = (s: Similarity) => `title ${s.title.toFixed(2)} with ${s.sh
  */
 export function storeCreated(repo: RepoRow, made: CreatedTicket, t: { title: string; body: string; labels: string[] }) {
   const author = made.author ?? sourceFor(repo).selfLogin();
-  if (!isAllowedAuthor(author)) return;
+  if (!isAllowedAuthor(author, repo)) return;
   const now = new Date().toISOString();
   run(
     `INSERT INTO tickets (repo_id, number, node_id, title, body, url, author, state, labels, updated_at, created_at)
@@ -91,7 +91,7 @@ export async function raiseFollowUps(t: TicketRow, follow: FollowUps, commit: { 
       continue;
     }
     const body = followUpBody(f, t, commit, repo.default_branch).slice(0, MAX_RAISED_BODY);
-    const candidates = others.filter((o) => labelsOf(o).includes(label.raised) && isAllowedAuthor(o.author)).map((o) => ({ number: o.number, title: o.title, body: o.body }));
+    const candidates = others.filter((o) => labelsOf(o).includes(label.raised) && isAllowedAuthor(o.author, repo)).map((o) => ({ number: o.number, title: o.title, body: o.body }));
     const similar = bestMatch({ title, body: [f.detail, f.consequence ?? ''].join(' ') }, candidates);
     if (similar) {
       const m = similar.match;
