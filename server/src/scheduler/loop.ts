@@ -84,7 +84,18 @@ export function startScheduler() {
 
 /** Runs an allocation pass soon, e.g. after a run ends or a setting changes. It never waits for a GitHub sync. */
 export function kick() {
-  setTimeout(() => void allocatePass(), 500);
+  const timer = setTimeout(() => {
+    kicks.delete(timer);
+    void allocatePass();
+  }, 500);
+  kicks.add(timer);
+}
+const kicks = new Set<NodeJS.Timeout>();
+
+/** For tests: drop pending kicks, so one test's allocation pass can't run in the next. */
+export function cancelKicks() {
+  for (const timer of kicks) clearTimeout(timer);
+  kicks.clear();
 }
 
 const IDLE: SyncProgress = { state: 'idle', kind: 'scheduled', phase: null, repo: null, done: 0, total: 0, requestedAt: null, lastFinishedAt: null, lastError: null };

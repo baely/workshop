@@ -26,8 +26,8 @@ const { createConnection, getConnection, reorderConnections, setBurndown, setCon
 const { bus, publish } = await import('../src/events.ts');
 const { activity, getRun, readLog, runView } = await import('../src/runs.ts');
 const { sweepMedia } = await import('../src/media.ts');
-const { checkRaiseRate, connectionPaused, drive, isDriving, launch, onRunSettled, PAUSE_GRACE_MS, requestPause, resume, stopRun } = await import('../src/scheduler/runner.ts');
-const { allocate, allocatePass, buildQueue, forgetProbe, hostLoads, hostViews, kick, launchNow, mergeApproved, probeAllowance, probeIdle, queueView, reattachRuns, refreshNow, resetSyncProgress, resumeNow, resumePaused, settleManual, syncProgress, syncSoon, tick } = await import('../src/scheduler/loop.ts');
+const { checkRaiseRate, connectionPaused, drive, isDriving, launch, onRunSettled, PAUSE_GRACE_MS, requestPause, RESULT_GRACE_MS, resume, stopRun } = await import('../src/scheduler/runner.ts');
+const { allocate, allocatePass, buildQueue, cancelKicks, forgetProbe, hostLoads, hostViews, kick, launchNow, mergeApproved, probeAllowance, probeIdle, queueView, reattachRuns, refreshNow, resetSyncProgress, resumeNow, resumePaused, settleManual, syncProgress, syncSoon, tick } = await import('../src/scheduler/loop.ts');
 const { setBypassLimits, setPrioritised, setPush, getTicket, ticketView, getRepo, partsOf, priorityGraph } = await import('../src/tickets.ts');
 const { checkingBlockers, syncRepo, HELD_CHECKS_PER_SYNC, LINK_BACKFILL_PER_SYNC } = await import('../src/scheduler/sync.ts');
 const { pushMessage } = await import('../src/scheduler/merge.ts');
@@ -109,6 +109,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   publish('tickets'); // tests write rows directly, so drop the cached priority graph
+  cancelKicks(); // a kick left by the last test would allocate (and move paused runs) in this one
   run("UPDATE tickets SET labels = ?, failures = 0, pr_number = NULL, blocked_by = '[]', push = NULL, push_stage = NULL, branch = NULL, state = 'open', pr_status = NULL, rescue = NULL, handoff = NULL, rework = NULL, follow_ups = NULL, prioritised = 0, bypass_limits = 0 WHERE id = 1", JSON.stringify([label.size('s'), label.stage('implement')]));
   run('DELETE FROM runs');
   fake.models = { launchEnv: () => ({ CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-test' }), billing: () => ['subscription'], models: () => [] };
@@ -892,6 +893,9 @@ describe('runner', () => {
     const toolResult = (id: string) => line({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] } });
     const DONE = result({ outcome: 'done', summary: 'Done.' });
     const PUSHED = line({ before: '', after: 'def5678', ahead: 1 });
+    const STOPPED = 'Workshop stopped the container: the agent had returned its result, but Claude Code was still running.';
+    const tasks = (...ids: string[]) =>
+      line({ type: 'system', subtype: 'background_tasks_changed', tasks: ids.map((task_id) => ({ task_id, task_type: 'local_bash', description: 'npm test' })) });
 
     /** A host whose run container prints what the test says, when it says it, until it's killed or finishes. */
     const live = () => {
@@ -990,6 +994,81 @@ describe('runner', () => {
       stream.end();
       expect(await settle(id)).toMatchObject({ status: 'succeeded', pause_requested_at: null });
       expect(stream.killed).toBe(false);
+    });
+
+    it('stops a container that stays up after a successful result, and publishes as normal', async () => {
+      const { stream, say } = live();
+      const id = go();
+      await say(toolUse('a'), toolResult('a'));
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await say(DONE); // a background command keeps claude -p, and the container, alive
+        await vi.advanceTimersByTimeAsync(RESULT_GRACE_MS - 1000);
+        expect(stream.killed).toBe(false);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(stream.killed).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+      const r = await settle(id);
+      expect(r).toMatchObject({ status: 'succeeded', summary: 'Done.' });
+      expect(fake.env.spec('publish')).toBeDefined();
+      expect(all("SELECT id FROM alerts WHERE kind = 'container-killed'")).toHaveLength(0);
+      expect(readLog(id).map((e) => e.text)).toContain(STOPPED);
+    });
+
+    it('keeps a container running while a background task is listed, and publishes the later result', async () => {
+      const { stream, say } = live();
+      const id = go();
+      await say(toolUse('a'), toolResult('a'));
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await say(tasks('bg1'), result({ outcome: 'failed', summary: 'Not committed yet.' }));
+        await vi.advanceTimersByTimeAsync(RESULT_GRACE_MS * 10);
+        expect(stream.killed).toBe(false);
+        // The task finishes and wakes the agent, which finishes the work and reports again, then exits.
+        await say(tasks('bg1'), toolUse('b'), toolResult('b'), DONE);
+      } finally {
+        vi.useRealTimers();
+      }
+      stream.end();
+      const r = await settle(id);
+      expect(r).toMatchObject({ status: 'succeeded', summary: 'Done.' });
+      expect(readLog(id).map((e) => e.text)).not.toContain(STOPPED);
+    });
+
+    it('stops the container once the background task list empties after the result', async () => {
+      const { stream, say } = live();
+      const id = go();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await say(tasks('bg1'), DONE);
+        await vi.advanceTimersByTimeAsync(RESULT_GRACE_MS * 2);
+        expect(stream.killed).toBe(false);
+        await say(tasks());
+        await vi.advanceTimersByTimeAsync(RESULT_GRACE_MS - 1000);
+        expect(stream.killed).toBe(false);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(stream.killed).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(await settle(id)).toMatchObject({ status: 'succeeded', summary: 'Done.' });
+    });
+
+    it("stops a container that stays up after an error result, and reports the agent's own error", async () => {
+      const { stream, say } = live();
+      const id = go();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await say(line({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['The API went away.'] }));
+        await vi.advanceTimersByTimeAsync(RESULT_GRACE_MS);
+        expect(stream.killed).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(await settle(id)).toMatchObject({ status: 'failed', error: 'The API went away.' });
+      expect(all("SELECT id FROM alerts WHERE kind = 'container-killed'")).toHaveLength(0);
     });
 
     it('honours a request made while the run is starting at the first boundary of the run step', async () => {
@@ -3042,6 +3121,7 @@ describe('sync', () => {
       fake.vcs.closePullRequest = vi.fn(async () => {
         throw new Error('boom');
       });
+      run("UPDATE repos SET synced_at = '2026-01-01T00:00:00.000Z' WHERE id = 1"); // the last sync may share this millisecond
       const before = repo().synced_at;
       await syncRepo(repo());
       expect(one<{ message: string }>("SELECT message FROM alerts WHERE kind = 'close-cleanup' AND ack_at IS NULL")?.message).toContain('boom');
