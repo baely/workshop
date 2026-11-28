@@ -1881,13 +1881,15 @@ describe('allocation', () => {
   describe('while a GitHub sync is running', () => {
     let release = () => {};
     let gate = Promise.resolve();
+    let sync: Promise<unknown> = Promise.resolve();
     const ticket20 = () => one<{ id: number }>('SELECT id FROM tickets WHERE number = 20')!.id;
     beforeEach(() => {
       gate = new Promise<void>((r) => (release = r));
+      sync = Promise.resolve();
     });
     afterEach(async () => {
       release();
-      await syncSoon(); // the sync left running ends before the fakes change
+      await sync; // the sync left running ends before the fakes change
       onRunSettled(() => {});
     });
 
@@ -1901,7 +1903,7 @@ describe('allocation', () => {
         return [];
       };
       onRunSettled(kick);
-      const sync = syncSoon().then(() => (synced = true));
+      sync = syncSoon().then(() => (synced = true));
       await vi.waitFor(() => expect(listed).toBe(1));
       await tick(); // the timer's tick allocates without waiting for the sync
       expect(started()).toHaveLength(1);
@@ -1912,6 +1914,24 @@ describe('allocation', () => {
       await sync;
     });
 
+    it('fills a free slot on syncSoon before the sync completes', async () => {
+      configure(1);
+      let listed = 0;
+      let synced = false;
+      fake.tickets.listChanged = async () => {
+        listed++;
+        await gate;
+        return [];
+      };
+      sync = syncSoon().then(() => (synced = true));
+      expect(started()).toHaveLength(1); // the allocation pass starts before its first await
+      await vi.waitFor(() => expect(listed).toBe(1));
+      expect(synced).toBe(false);
+      release();
+      await sync;
+      expect(started()).toHaveLength(1);
+    });
+
     it("doesn't launch a ticket whose blockers it hasn't read yet", async () => {
       configure(3);
       const labels = [label.size('s'), label.stage('implement')];
@@ -1920,7 +1940,8 @@ describe('allocation', () => {
         await gate;
         return n === 20 ? [{ repo: 'me/app', number: 2, state: 'open', url: '' }] : [];
       });
-      const sync = syncSoon();
+      // Not syncSoon(): its up-front allocation would start ticket 20 before the sync sees it.
+      sync = syncRepo(getRepo(1)!);
       await vi.waitFor(() => expect(checkingBlockers.has(ticket20())).toBe(true));
       expect(buildQueue().find((c) => c.ticket.id === ticket20())?.blockedBy).toBe('Checking what it depends on');
       allocate(getSettings(), Date.now());

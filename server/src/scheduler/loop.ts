@@ -82,9 +82,10 @@ export function kick() {
   setTimeout(() => void allocatePass(), 500);
 }
 
-/** Syncs every repository now (or right after the sync that's running), then allocates. */
+/** Fills free slots now, then syncs every repository (or right after the sync that's running) and allocates again. */
 export function syncSoon() {
   lastSync.clear();
+  void allocatePass();
   return syncPass();
 }
 
