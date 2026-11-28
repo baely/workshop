@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import type { Limits as SubLimits, Overview, Settings, TicketOrder, Usage } from '../../../../../server/src/api-types.ts';
+import type { Limits as SubLimits, Settings, StatusSummary, TicketOrder, Usage } from '../../../../../server/src/api-types.ts';
 import { api, useApi } from '../../../api.ts';
 import { ModeSwitch } from '../../components/Layout.tsx';
 import { ErrorNote, Empty, Field, Panel } from '../../components/ui.tsx';
@@ -62,7 +62,7 @@ function SaveBar({ saved, error }: { saved: boolean; error: string | null }) {
 
 export function General() {
   const { draft, error, set, save, saved, saveError, touch } = useSettings();
-  const { data: overview } = useApi<Overview>('/overview', ['settings']);
+  const { data: overview } = useApi<StatusSummary>('/status', ['settings']);
   const [authors, setAuthors] = useState<string | null>(null);
   if (!draft) return <ErrorNote error={error} />;
   const toggleDay = (d: number) => set({ days: draft.days.includes(d) ? draft.days.filter((x) => x !== d) : [...draft.days, d].sort() });
@@ -127,6 +127,7 @@ export function General() {
             </select>
           </Field>
           <NumberField label="Check for changes every (minutes)" value={draft.pollMinutes} min={1} max={60} onChange={(n) => set({ pollMinutes: n })} />
+          <NumberField label="Alert when agents open more tickets per hour than" value={draft.raiseAlertPerHour} min={1} max={1000} onChange={(n) => set({ raiseAlertPerHour: n })} />
           <NumberField label="Keep run history for (days)" hint="Finished runs are removed after this, and screenshots when the ticket finishes." value={draft.retentionDays} min={1} max={365} onChange={(n) => set({ retentionDays: n })} />
         </div>
       </Panel>

@@ -100,7 +100,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 export function RunView() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { data: run, error } = useApi<Run>(`/runs/${id}`, ['runs']);
+  const { data: run, error } = useApi<Run>(`/runs/${id}`, ['runs', 'activity']);
   const now = useNow(10_000);
   const transcript = useRef(emptyTranscript());
   const [, setVersion] = useState(0);

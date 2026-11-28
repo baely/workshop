@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 import { NavLink, Outlet } from 'react-router';
-import type { Mode, Overview } from '../../../../server/src/api-types.ts';
+import type { Mode, StatusSummary } from '../../../../server/src/api-types.ts';
 import { api, useApi, useLiveState } from '../../api.ts';
 import { tokens } from '../../format.ts';
 import { Icon, type IconName } from './Icon.tsx';
@@ -24,7 +24,7 @@ export const MODES: { value: Mode; label: string }[] = [
 export function ModeSwitch({ mode, withinHours }: { mode: Mode; withinHours: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<Mode | null>(null);
-  // Stay locked until the refreshed overview reports the requested mode.
+  // Stay locked until the refreshed status reports the requested mode.
   useEffect(() => { if (pending === mode) setPending(null); }, [mode, pending]);
   const set = (value: Mode) => {
     if (pending !== null || value === mode) return;
@@ -84,9 +84,9 @@ function Brand({ className }: { className: string }) {
 
 export function Layout({ version }: { version: string }) {
   const stalled = useStalled();
-  const { data } = useApi<Overview>('/overview', ['settings', 'allowance', 'alerts', 'runs', 'connections']);
+  const { data } = useApi<StatusSummary>('/status', ['settings', 'allowance', 'alerts', 'connections']);
   const signOut = () => api('/auth/logout', { body: {} }).finally(() => window.location.assign('/'));
-  const openAlerts = data?.alerts.length ?? 0;
+  const openAlerts = data?.openAlerts ?? 0;
   return (
     <div className="shell">
       <aside className="sidebar">

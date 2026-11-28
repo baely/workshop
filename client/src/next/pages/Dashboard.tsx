@@ -119,7 +119,7 @@ function QueueRow({ q }: { q: QueueItem }) {
 }
 
 function Host({ h }: { h: HostView }) {
-  const pools = h.pools ?? [{ size: 'standard' as const, slots: h.slots, busy: h.busy }];
+  const pools = h.pools ?? [{ size: 'standard' as const, slots: h.slots, busy: h.busy, borrowed: 0 }];
   return (
     <li className="item column">
       <div className="spread">
@@ -134,7 +134,7 @@ function Host({ h }: { h: HostView }) {
       </div>
       {h.status === 'ok' &&
         pools.map((p) => (
-          <div key={p.size} className="cap" title={`${p.busy} of ${p.slots} ${p.size} agents running`}>
+          <div key={p.size} className="cap" title={`${p.busy} of ${p.slots} ${p.size} slots in use${p.borrowed ? `, ${p.borrowed} by smaller agents` : ''}`}>
             {h.pools && <span className="small muted">{p.size}</span>}
             <div className="cap-track" style={{ gridTemplateColumns: `repeat(${p.slots}, 1fr)` }}>
               {Array.from({ length: p.slots }, (_, i) => (
@@ -183,7 +183,7 @@ function setupSteps(connections: ConnectionView[], repos: RepoView[], settings: 
 }
 
 export function Dashboard() {
-  const { data, error } = useApi<Overview>('/overview', ['runs', 'tickets', 'alerts', 'connections', 'settings', 'allowance', 'agents', 'repos']);
+  const { data, error } = useApi<Overview>('/overview', ['runs', 'activity', 'tickets', 'alerts', 'connections', 'settings', 'allowance', 'agents', 'repos']);
   const { data: connections } = useApi<ConnectionView[]>('/connections', ['connections']);
   const { data: repos } = useApi<RepoView[]>('/repos', ['repos']);
   const { data: settings } = useApi<Settings>('/settings', ['settings']);
@@ -237,7 +237,7 @@ export function Dashboard() {
       <div className="stats">
         <Stat label="Working" value={working} sub={paused ? `${paused} paused` : undefined} tone={working ? 'running' : undefined} to="/runs" />
         <Stat label="Needs you" value={data.needsYou.length} tone={data.needsYou.length ? 'attention' : undefined} />
-        <Stat label="Up next" value={data.queue.length} sub={data.queue.length ? `${ready} ready` : undefined} to="/tickets" />
+        <Stat label="Up next" value={data.queueTotal} sub={data.queue.length ? `${ready} ready` : undefined} to="/tickets" />
         <Stat label="Agent slots" value={slots ? `${busy}/${slots}` : '–'} sub={slots ? `${Math.max(0, slots - busy)} free` : 'No host online'} />
       </div>
       <div className="split">
@@ -262,12 +262,13 @@ export function Dashboard() {
               </ul>
             </Panel>
           )}
-          <Panel title="Up next" count={data.queue.length} action={<Link to="/tickets">All tickets</Link>}>
+          <Panel title="Up next" count={data.queueTotal} action={<Link to="/tickets">All tickets</Link>}>
             {data.queue.length ? (
               <ul className="list">
-                {data.queue.slice(0, 8).map((q) => (
+                {data.queue.map((q) => (
                   <QueueRow key={q.ticketId} q={q} />
                 ))}
+                {data.queueTotal > data.queue.length && <li className="small muted">And {data.queueTotal - data.queue.length} more in the queue.</li>}
               </ul>
             ) : (
               <Empty>No tickets are ready for an agent.</Empty>
