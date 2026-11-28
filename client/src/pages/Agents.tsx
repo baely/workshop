@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import type { AgentClassView, Billing, ModelOption } from '../../../../server/src/api-types.ts';
-import { api, useApi } from '../../api.ts';
-import { ErrorNote, Field, Hint, Panel, Segmented } from '../../components/ui.tsx';
+import type { AgentClassView, Billing, ModelOption } from '../../../server/src/api-types.ts';
+import { api, useApi } from '../api.ts';
+import { ErrorNote, Panel } from '../components/ui.tsx';
 
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const BILLING: { value: Billing; label: string }[] = [
@@ -39,7 +39,8 @@ function AgentForm({ agent, models }: { agent: AgentClassView; models: ModelOpti
     <Panel title={agent.label} action={<span className="small muted">{agent.description}</span>}>
       <form className="panel-body stack" onSubmit={save}>
         <div className="fields">
-          <Field label="Model" help={!models.length ? 'Add Claude under Connections first.' : undefined}>
+          <label className="field">
+            <span>Model</span>
             <select
               value={selected ? key(selected) : ''}
               onChange={(e) => {
@@ -60,56 +61,63 @@ function AgentForm({ agent, models }: { agent: AgentClassView; models: ModelOpti
                 </optgroup>
               ))}
             </select>
-          </Field>
-          <Field label="Effort">
+            {!models.length && <span className="help">Add Claude under Connections first.</span>}
+          </label>
+          <label className="field">
+            <span>Effort</span>
             <select value={draft.effort ?? ''} onChange={(e) => set({ effort: e.target.value || null })}>
               <option value="">Model default</option>
               {EFFORTS.map((x) => (
                 <option key={x}>{x}</option>
               ))}
             </select>
-          </Field>
+          </label>
           <div className="field">
-            <span className="field-label">
-              Billing
-              <Hint>Subscription uses the first Claude subscription in your order (Connections) that isn't over your limits.</Hint>
-            </span>
-            <Segmented label={`${agent.label} billing`} value={draft.billing} options={BILLING} onChange={(billing) => set({ billing })} />
+            <span>Billing</span>
+            <div className="segmented" role="group" aria-label={`${agent.label} billing`}>
+              {BILLING.map((b) => (
+                <button key={b.value} type="button" aria-pressed={draft.billing === b.value} onClick={() => set({ billing: b.value })}>
+                  {b.label}
+                </button>
+              ))}
+            </div>
             {selected && !selected.billing.includes(draft.billing) && (
               <span className="help error-text">
                 {selected.connectionName} has no {draft.billing === 'api' ? 'API key' : 'subscription token'}.
               </span>
             )}
+            {draft.billing === 'subscription' && <span className="help">Uses the first subscription in your order on the Connections page that isn't over your limits.</span>}
           </div>
-          <Field label="Max turns">
+          <label className="field">
+            <span>Max turns</span>
             <input type="number" min={1} max={2000} value={draft.maxTurns} onChange={(e) => set({ maxTurns: Number(e.target.value) })} />
-          </Field>
-          <Field label="Time limit (minutes)">
+          </label>
+          <label className="field">
+            <span>Time limit (minutes)</span>
             <input type="number" min={5} max={1440} value={draft.timeoutMin} onChange={(e) => set({ timeoutMin: Number(e.target.value) })} />
-          </Field>
+          </label>
         </div>
-        <details className="disclosure" open={draft.prompt !== agent.defaultPrompt}>
-          <summary>
-            Instructions <span className="muted small">{draft.prompt === agent.defaultPrompt ? 'Default' : 'Customised'}</span>
-          </summary>
-          <div className="stack">
-            <textarea rows={14} aria-label="Instructions" value={draft.prompt} onChange={(e) => set({ prompt: e.target.value })} />
+        <label className="field">
+          <span>Instructions</span>
+          <textarea rows={12} value={draft.prompt} onChange={(e) => set({ prompt: e.target.value })} />
+          <span className="help">
+            {draft.prompt === agent.defaultPrompt ? 'These are the default instructions. ' : 'Customised. '}
             {draft.prompt !== agent.defaultPrompt && (
-              <div>
-                <button type="button" onClick={() => set({ prompt: agent.defaultPrompt })}>
-                  Reset to default
-                </button>
-              </div>
+              <button type="button" className="link small" onClick={() => set({ prompt: agent.defaultPrompt })}>
+                Reset to default
+              </button>
             )}
-          </div>
-        </details>
-        <details className="disclosure">
-          <summary>What Workshop adds after these instructions</summary>
-          <pre className="mono small wrap">{agent.protocol}</pre>
+          </span>
+        </label>
+        <details>
+          <summary className="small">What Workshop adds after these instructions</summary>
+          <pre className="mono small" style={{ whiteSpace: 'pre-wrap' }}>
+            {agent.protocol}
+          </pre>
         </details>
         <ErrorNote error={error} />
         <div className="row">
-          <button className="primary">Save</button>
+          <button className="primary">Save {agent.label}</button>
           {saved && <span className="small muted">Saved.</span>}
         </div>
       </form>
@@ -120,24 +128,14 @@ function AgentForm({ agent, models }: { agent: AgentClassView; models: ModelOpti
 export function Agents() {
   const { data: agents, error } = useApi<AgentClassView[]>('/agents', ['agents']);
   const { data: models } = useApi<ModelOption[]>('/models', ['connections']);
-  const [name, setName] = useState<string | null>(null);
-  const current = agents?.find((a) => a.name === name) ?? agents?.[0];
-  const modelLabel = (a: AgentClassView) => models?.find((m) => m.id === a.model && m.connectionId === a.modelConnectionId)?.label ?? a.model ?? 'No model';
   return (
-    <div className="master">
+    <div className="stack">
+      <h1>Agents</h1>
+      <p className="muted">Each agent runs Claude Code with its own model, billing and instructions. Workshop adds the ticket and its fixed instructions to every run.</p>
       <ErrorNote error={error} />
-      <nav className="master-list" aria-label="Agents">
-        {agents?.map((a) => (
-          <button key={a.name} type="button" aria-current={a === current || undefined} onClick={() => setName(a.name)}>
-            <strong>{a.label}</strong>
-            <span className="small muted">
-              {modelLabel(a)}
-              {a.effort ? ` · ${a.effort}` : ''}
-            </span>
-          </button>
-        ))}
-      </nav>
-      {current && <AgentForm key={current.name} agent={current} models={models ?? []} />}
+      {agents?.map((a) => (
+        <AgentForm key={a.name} agent={a} models={models ?? []} />
+      ))}
     </div>
   );
 }

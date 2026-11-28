@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from 'react';
-import type { ApiTokenView, NewApiToken } from '../../../../server/src/api-types.ts';
-import { TOKEN_LIFETIMES } from '../../access.ts';
-import { api, useApi, useNow } from '../../api.ts';
+import type { ApiTokenView, NewApiToken } from '../../../../../server/src/api-types.ts';
+import { TOKEN_LIFETIMES } from '../../../access.ts';
+import { api, useApi, useNow } from '../../../api.ts';
 import { Empty, ErrorNote, Panel } from '../../components/ui.tsx';
-import { ago, clock } from '../../format.ts';
+import { ago, clock } from '../../../format.ts';
 
 /** A weekday is enough for the next few days; further out needs the date. */
 const expiry = (ms: number, now: number) => (ms - now < 6 * 86400_000 ? clock(ms) : new Date(ms).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' }));

@@ -1,7 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
-import type { ConnectionKind, ConnectionView, FieldDef, Installation, ProviderInfo, TestResult } from '../../../../server/src/api-types.ts';
-import { api, useApi } from '../../api.ts';
+import type { ConnectionKind, ConnectionView, FieldDef, Installation, ProviderInfo, TestResult } from '../../../../../server/src/api-types.ts';
+import { api, useApi } from '../../../api.ts';
 import { Icon } from '../../components/Icon.tsx';
 import { Empty, ErrorNote, Field, Hint, Menu, Modal, Panel, Status, Tag } from '../../components/ui.tsx';
 

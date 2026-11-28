@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import type { RepoView } from '../../../../server/src/api-types.ts';
-import { api, useApi } from '../../api.ts';
+import type { RepoView } from '../../../../../server/src/api-types.ts';
+import { api, useApi } from '../../../api.ts';
 import { Icon } from '../../components/Icon.tsx';
 import { Empty, ErrorNote, Field, Panel, Status, Switch, Tag } from '../../components/ui.tsx';
-import { repoChanges, type RepoDraft } from '../../repo-settings.ts';
+import { repoChanges, type RepoDraft } from '../../../repo-settings.ts';
 
 function RepoRow({ repo, onChange }: { repo: RepoView; onChange: (id: number, body: object) => Promise<unknown> }) {
   const [enabling, setEnabling] = useState<boolean | null>(null);

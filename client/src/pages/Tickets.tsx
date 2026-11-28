@@ -1,9 +1,8 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router';
 import type { Push, Size, Stage, TicketStatePatch, TicketView } from '../../../server/src/api-types.ts';
 import { api, useApi } from '../api.ts';
-import { Icon } from '../components/Icon.tsx';
-import { ErrorNote, Menu, Modal, PageHead, Segmented, Status, Tag, useAction, type MenuItem } from '../components/ui.tsx';
+import { ErrorNote, Modal, Status } from '../components/ui.tsx';
 import { STAGE_TEXT } from '../format.ts';
 
 export const COLUMNS: { title: string; match: (t: TicketView) => boolean }[] = [
@@ -39,50 +38,42 @@ export function TicketStatus({ t }: { t: TicketView }) {
   return null;
 }
 
-/**
- * What you can do to a ticket, as menu items: nominate it, move it up the queue, push it through
- * its stages, lift your usage limits for it, or change its labels by hand.
- */
-export function useTicketActions(t: TicketView): { items: (MenuItem | false)[]; busy: boolean; error: string | null; editor: ReactNode } {
-  const { busy, error, run } = useAction();
-  const [editing, setEditing] = useState(false);
-  const put = (path: string, body: object) => () => void run(() => api(`/tickets/${t.id}/${path}`, { method: 'PUT', body }));
-  const push = (scope: Push) => () => void run(() => api(`/tickets/${t.id}/push`, { body: { scope } }));
-  const open = t.state === 'open';
-  const inScope = t.nominated !== false;
-  const canPush = inScope && !t.push && Boolean(t.next) && t.stage !== 'pr-review';
-  const items: (MenuItem | false)[] = [
-    t.nominated === false && open && { label: 'Nominate', icon: 'plus', onClick: put('nominated', { nominated: true }) },
-    canPush && !t.activeRunId && { label: 'Run next stage', icon: 'play', onClick: push('stage') },
-    canPush && { label: 'Run until it needs you', icon: 'play', onClick: push('lifecycle') },
-    inScope && Boolean(t.push) && { label: 'Cancel push', icon: 'x', onClick: () => void run(() => api(`/tickets/${t.id}/push`, { method: 'DELETE' })) },
-    inScope && open && !t.prioritised && { label: 'Prioritise', icon: 'star', onClick: put('prioritised', { prioritised: true }) },
-    inScope && t.prioritised && { label: 'Remove priority', icon: 'star', onClick: put('prioritised', { prioritised: false }) },
-    inScope && open && !t.bypassLimits && {
-      label: 'Ignore usage limits',
-      icon: 'up',
-      onClick: put('bypass-limits', { bypassLimits: true }),
-      title: 'Agents on this ticket keep going past your 5-hour and weekly limits. Limits Claude reports still stop them.',
-    },
-    inScope && t.bypassLimits && { label: 'Respect usage limits', icon: 'down', onClick: put('bypass-limits', { bypassLimits: false }) },
-    !t.activeRunId && { label: 'Change status', icon: 'settings', onClick: () => setEditing(true) },
-    t.nominated === true && { label: 'Withdraw nomination', icon: 'x', onClick: put('nominated', { nominated: false }) },
-    { label: 'Open on GitHub', icon: 'external', href: t.url },
-  ];
-  return { items: items.map((i) => (i && busy ? { ...i, disabled: true } : i)), busy, error, editor: editing ? <StatusEditor t={t} onClose={() => setEditing(false)} /> : null };
-}
-
-/** The flags on a ticket, as small labels. */
-export function TicketTags({ t }: { t: TicketView }) {
+function PushControls({ t }: { t: TicketView }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const send = (init: { method?: string; body?: unknown }) => {
+    setBusy(true);
+    setError(null);
+    api(`/tickets/${t.id}/push`, init)
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setBusy(false));
+  };
+  const push = (scope: Push) => send({ body: { scope } });
   return (
     <>
-      {t.size && <Tag>{t.size.toUpperCase()}</Tag>}
-      {t.prioritised && <Tag tone="accent" icon="star">Priority</Tag>}
-      {t.push && <Tag tone="accent" title={t.push === 'stage' ? 'Pushed: next stage only' : 'Pushed: until it needs you'}>Pushed</Tag>}
-      {t.bypassLimits && <Tag title="Ignores your usage limits">No limits</Tag>}
-      {t.nominated === false && <Tag title="Not nominated: Workshop leaves it alone">Not nominated</Tag>}
-      {t.labels.includes('workshop/split') && <Tag title="Broken into smaller tickets, which Workshop works on instead">Split</Tag>}
-      {t.labels.includes('workshop/too-big') && <Tag tone="attention" title="An agent ran out of turns or time. The Classifier breaks it down next">Too big</Tag>}
+      {t.push ? (
+        <div className="row small">
+          <span className="muted">Pushed: {t.push === 'stage' ? 'next stage only' : 'until it needs you'}</span>
+          <button onClick={() => send({ method: 'DELETE' })} disabled={busy}>
+            Cancel push
+          </button>
+        </div>
+      ) : (
+        t.next &&
+        t.stage !== 'pr-review' && (
+          <div className="row small">
+            {!t.activeRunId && (
+              <button onClick={() => push('stage')} disabled={busy}>
+                Run next stage
+              </button>
+            )}
+            <button onClick={() => push('lifecycle')} disabled={busy}>
+              Run until it needs you
+            </button>
+          </div>
+        )
+      )}
+      <ErrorNote error={error} />
     </>
   );
 }
@@ -167,43 +158,147 @@ function StatusEditor({ t, onClose }: { t: TicketView; onClose: () => void }) {
   );
 }
 
-function Card({ t, showRepo }: { t: TicketView; showRepo: boolean }) {
-  const { items, error, editor } = useTicketActions(t);
-  const pr = t.prStatus === 'conflict' ? 'conflicts' : t.prStatus === 'blocked' ? 'checks' : null;
+function NominateControls({ t }: { t: TicketView }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (t.nominated === null || (t.nominated === false && t.state !== 'open')) return null;
+  const send = (nominated: boolean) => {
+    setBusy(true);
+    setError(null);
+    api(`/tickets/${t.id}/nominated`, { method: 'PUT', body: { nominated } })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <>
+      <div className="row small">
+        {t.nominated ? (
+          <>
+            <span className="muted">Nominated</span>
+            <button onClick={() => send(false)} disabled={busy}>
+              Withdraw nomination
+            </button>
+          </>
+        ) : (
+          <button onClick={() => send(true)} disabled={busy}>
+            Nominate
+          </button>
+        )}
+      </div>
+      <ErrorNote error={error} />
+    </>
+  );
+}
+
+function PriorityControls({ t }: { t: TicketView }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (t.state !== 'open' && !t.prioritised) return null;
+  const send = (prioritised: boolean) => {
+    setBusy(true);
+    setError(null);
+    api(`/tickets/${t.id}/prioritised`, { method: 'PUT', body: { prioritised } })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <>
+      <div className="row small">
+        {t.prioritised ? (
+          <>
+            <span className="muted">Prioritised</span>
+            <button onClick={() => send(false)} disabled={busy}>
+              Remove priority
+            </button>
+          </>
+        ) : (
+          <button onClick={() => send(true)} disabled={busy}>
+            Prioritise
+          </button>
+        )}
+      </div>
+      <ErrorNote error={error} />
+    </>
+  );
+}
+
+function BypassControls({ t }: { t: TicketView }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (t.state !== 'open' && !t.bypassLimits) return null;
+  const send = (bypassLimits: boolean) => {
+    setBusy(true);
+    setError(null);
+    api(`/tickets/${t.id}/bypass-limits`, { method: 'PUT', body: { bypassLimits } })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setBusy(false));
+  };
+  const title = 'Agents on this ticket keep going past your 5-hour and weekly limits. Limits Claude reports still stop them.';
+  return (
+    <>
+      <div className="row small">
+        {t.bypassLimits ? (
+          <>
+            <span className="muted">Ignores usage limits</span>
+            <button onClick={() => send(false)} disabled={busy}>
+              Respect usage limits
+            </button>
+          </>
+        ) : (
+          <button onClick={() => send(true)} disabled={busy} title={title}>
+            Ignore usage limits
+          </button>
+        )}
+      </div>
+      <ErrorNote error={error} />
+    </>
+  );
+}
+
+function Card({ t }: { t: TicketView }) {
+  const [editing, setEditing] = useState(false);
   return (
     <article className={t.prioritised ? 'card prioritised' : 'card'}>
-      <div className="card-top">
-        <Link className="ref" to={`/tickets/${t.id}`}>
-          {showRepo ? `${t.repo.split('/').pop()}#${t.number}` : `#${t.number}`}
+      <div className="spread small muted">
+        <Link to={`/tickets/${t.id}`}>
+          {t.repo}#{t.number}
         </Link>
-        <Menu label={`Actions for #${t.number}`} items={items} />
+        <span className="row">
+          {t.prioritised && <span className="tag">Prioritised</span>}
+          {t.bypassLimits && <span className="tag">Ignores limits</span>}
+          {t.size && <span className="tag">{t.size.toUpperCase()}</span>}
+        </span>
       </div>
-      <Link className="card-title" to={`/tickets/${t.id}`}>
+      <a href={t.url} target="_blank" rel="noreferrer">
         {t.title}
-      </Link>
-      <div className="row tight">
-        <TicketTags t={t} />
-      </div>
+      </a>
       <TicketStatus t={t} />
-      {(t.prUrl || t.mediaCount > 0) && (
-        <div className="row small">
-          {t.prUrl && (
-            <a className="with-icon" href={t.prUrl} target="_blank" rel="noreferrer" title="Pull request">
-              <Icon name="pr" size={14} />#{t.prNumber}
-              {pr && <span className="muted">({pr})</span>}
-            </a>
-          )}
-          {t.mediaCount > 0 && (
-            <Link className="with-icon" to={`/tickets/${t.id}/media`} title="Screenshots">
-              <Icon name="image" size={14} />
-              {t.mediaCount}
-            </Link>
-          )}
-        </div>
+      {t.prUrl && (
+        <a className="small" href={t.prUrl} target="_blank" rel="noreferrer">
+          Pull request #{t.prNumber}
+          {t.prStatus === 'conflict' ? ' (conflicts)' : t.prStatus === 'blocked' ? ' (waiting for checks)' : ''}
+        </a>
+      )}
+      {t.mediaCount > 0 && (
+        <Link className="small" to={`/tickets/${t.id}/media`}>
+          Screenshots ({t.mediaCount})
+        </Link>
       )}
       {t.next && !t.activeRunId && <span className="small muted">Next: {t.next}</span>}
-      <ErrorNote error={error} />
-      {editor}
+      {!t.activeRunId && (
+        <div className="row small">
+          <button onClick={() => setEditing(true)}>Change status</button>
+        </div>
+      )}
+      {editing && <StatusEditor t={t} onClose={() => setEditing(false)} />}
+      <NominateControls t={t} />
+      {t.nominated !== false && (
+        <>
+          <PriorityControls t={t} />
+          <BypassControls t={t} />
+          <PushControls t={t} />
+        </>
+      )}
     </article>
   );
 }
@@ -211,14 +306,10 @@ function Card({ t, showRepo }: { t: TicketView; showRepo: boolean }) {
 export function Tickets() {
   const { data, error } = useApi<TicketView[]>('/tickets', ['tickets', 'runs']);
   const [repo, setRepo] = useState('');
-  const [filter, setFilter] = useState(FILTERS[0].label);
-  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState(FILTERS[0]);
   const [syncing, setSyncing] = useState(false);
   const repos = [...new Set((data ?? []).map((t) => t.repo))].sort();
-  const match = FILTERS.find((f) => f.label === filter)!.match;
-  const q = query.trim().toLowerCase();
-  const inRepo = (data ?? []).filter((t) => !repo || t.repo === repo);
-  const shown = inRepo.filter((t) => match(t) && (!q || t.title.toLowerCase().includes(q) || `#${t.number}`.includes(q)));
+  const shown = (data ?? []).filter((t) => (!repo || t.repo === repo) && filter.match(t));
 
   const sync = () => {
     setSyncing(true);
@@ -227,44 +318,47 @@ export function Tickets() {
 
   return (
     <div className="stack">
-      <PageHead title="Tickets">
+      <div className="spread">
+        <h1>Tickets</h1>
         <button onClick={sync} disabled={syncing}>
-          <Icon name="refresh" />
-          {syncing ? 'Syncing…' : 'Sync'}
+          {syncing ? 'Syncing…' : 'Sync now'}
         </button>
-      </PageHead>
-      <div className="toolbar">
-        <Segmented label="Show" value={filter} onChange={setFilter} options={FILTERS.map((f) => ({ value: f.label, label: <>{f.label} <span className="count">{inRepo.filter(f.match).length}</span></> }))} />
-        <div className="search">
-          <Icon name="search" />
-          <input type="search" placeholder="Search tickets" aria-label="Search tickets" value={query} onChange={(e) => setQuery(e.target.value)} />
-        </div>
-        {repos.length > 1 && (
-          <select value={repo} onChange={(e) => setRepo(e.target.value)} aria-label="Repository">
-            <option value="">All repositories</option>
-            {repos.map((r) => (
-              <option key={r}>{r}</option>
-            ))}
-          </select>
-        )}
       </div>
+      <div className="row">
+        <select value={repo} onChange={(e) => setRepo(e.target.value)} style={{ width: 'auto' }} aria-label="Repository">
+          <option value="">All repositories</option>
+          {repos.map((r) => (
+            <option key={r}>{r}</option>
+          ))}
+        </select>
+        <div className="segmented" role="group" aria-label="Show">
+          {FILTERS.map((f) => (
+            <button key={f.label} aria-pressed={f === filter} onClick={() => setFilter(f)}>
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {filter.label === 'Skipped' && (
+        <p className="muted small">Workshop leaves skipped tickets alone. To bring one back, remove the workshop/skip label or use Change status.</p>
+      )}
       <ErrorNote error={error} />
       {data && !data.length && (
         <p className="notice">
-          No open tickets from your ticket authors in enabled repositories yet. Check <Link to="/settings/repositories">Repositories</Link> and <Link to="/settings">Settings</Link>, or open an
-          issue on GitHub.
+          No open tickets from your ticket authors in enabled repositories yet. Check <Link to="/connections">Connections</Link> and{' '}
+          <Link to="/settings">Settings</Link>, or open an issue on GitHub.
         </p>
       )}
       <div className="board">
         {COLUMNS.map((col) => {
           const tickets = shown.filter(col.match).sort((a, b) => Number(b.prioritised) - Number(a.prioritised));
           return (
-            <section key={col.title} className={tickets.length ? 'column' : 'column none'} aria-label={col.title}>
+            <section key={col.title} className="column" aria-label={col.title}>
               <h3>
-                {col.title} <span className="count">{tickets.length}</span>
+                {col.title} <span className="muted">{tickets.length}</span>
               </h3>
               {tickets.map((t) => (
-                <Card key={t.id} t={t} showRepo={!repo && repos.length > 1} />
+                <Card key={t.id} t={t} />
               ))}
             </section>
           );

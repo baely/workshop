@@ -1,8 +1,9 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import type { Limits as SubLimits, Overview, Settings, TicketOrder, Usage } from '../../../../server/src/api-types.ts';
-import { api, useApi } from '../../api.ts';
+import type { Limits as SubLimits, Overview, Settings, TicketOrder, Usage } from '../../../../../server/src/api-types.ts';
+import { api, useApi } from '../../../api.ts';
 import { ModeSwitch } from '../../components/Layout.tsx';
 import { ErrorNote, Empty, Field, Panel } from '../../components/ui.tsx';
+import { setNewInterface } from '../../../interface.ts';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const ORDERS: { value: TicketOrder; label: string }[] = [
@@ -130,6 +131,16 @@ export function General() {
         </div>
       </Panel>
       <SaveBar saved={saved} error={saveError} />
+      <Panel
+        title="Interface"
+        action={
+          <button type="button" onClick={() => setNewInterface(false)}>
+            Use the original interface
+          </button>
+        }
+      >
+        <p className="panel-body small muted">You're trying the new interface. The choice is kept in this browser only.</p>
+      </Panel>
     </form>
   );
 }

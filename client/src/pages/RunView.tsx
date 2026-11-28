@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Link, useNavigate, useParams } from 'react-router';
+import { Link, useParams } from 'react-router';
 import type { LogEntry, NewApiToken, RunView as Run } from '../../../server/src/api-types.ts';
 import { claudeBrief } from '../access.ts';
 import { api, useApi, useNow } from '../api.ts';
 import { Markdown } from '../components/Markdown.tsx';
-import { Icon } from '../components/Icon.tsx';
-import { ErrorNote, Menu, Panel, Progress, Status } from '../components/ui.tsx';
-import { runNote } from './Dashboard.tsx';
+import { ErrorNote, Panel, Progress, Status } from '../components/ui.tsx';
 import { AGENT_LABEL, clock, duration, money, runStatus, tokens } from '../format.ts';
 import { LiveStream } from '../live.ts';
 import { addEntry, emptyTranscript, type Item, type Transcript } from '../transcript.ts';
@@ -88,18 +86,8 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function Fact({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div>
-      <dt>{label}</dt>
-      <dd>{children}</dd>
-    </div>
-  );
-}
-
 export function RunView() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const { data: run, error } = useApi<Run>(`/runs/${id}`, ['runs']);
   const now = useNow(10_000);
   const transcript = useRef(emptyTranscript());
@@ -214,27 +202,34 @@ export function RunView() {
   const working = run.status === 'starting' || run.status === 'running';
   const pausedByYou = run.status === 'paused' && run.pauseReason === 'manual';
 
-  const used = tokens((run.inputTokens ?? 0) + (run.outputTokens ?? 0) || null);
-  const note = runNote(run);
   return (
     <div className="stack">
-      <div className="page-head">
-        <div className="page-title">
-          <div className="row small muted">
-            <Link to="/runs">Runs</Link>
-            <Icon name="chevron" size={12} />
-            <Link to={`/tickets/${run.ticketId}`}>{run.ticket}</Link>
-          </div>
-          <h1>{AGENT_LABEL[run.agent]}</h1>
-          <div className="row">
-            <Status tone={status.tone}>{status.label}</Status>
-            <span className="muted truncate">{run.ticketTitle}</span>
-          </div>
+      <div className="spread">
+        <div className="stack" style={{ gap: 4 }}>
+          <h1>
+            {AGENT_LABEL[run.agent]} on {run.ticket}
+          </h1>
+          <a href={run.ticketUrl} target="_blank" rel="noreferrer">
+            {run.ticketTitle}
+          </a>
         </div>
         <div className="row">
+          <Link className="button" to={`/tickets/${run.ticketId}`}>
+            Ticket lifecycle
+          </Link>
+          {run.mediaCount > 0 && (
+            <Link className="button" to={`/tickets/${run.ticketId}/media?run=${run.id}`}>
+              View screenshots ({run.mediaCount})
+            </Link>
+          )}
+          <a className="button" href={`/api/runs/${run.id}/export`} download>
+            Export log
+          </a>
+          <button disabled={busy} onClick={giveClaudeAccess} title="Create a read-only API token and a brief to paste into Claude Code">
+            Give Claude access
+          </button>
           {working && !run.pauseRequested && (
             <button disabled={busy} onClick={() => act('pause')} title="Stop after the current step and free the host until you resume it">
-              <Icon name="pause" />
               Pause
             </button>
           )}
@@ -249,38 +244,36 @@ export function RunView() {
             </button>
           )}
           {pausedByYou && (
-            <button className="primary" disabled={busy} onClick={() => act('resume')} title="Continues the same conversation; its first step re-reads the conversation so far, which uses some extra usage.">
-              <Icon name="play" />
+            <button className="primary" disabled={busy} onClick={() => act('resume')}>
               Resume
             </button>
           )}
           {active && (
             <button className="danger" onClick={stop}>
-              <Icon name="stop" />
               Stop
             </button>
           )}
-          <Menu
-            label="More"
-            items={[
-              run.mediaCount > 0 && { label: `Screenshots (${run.mediaCount})`, icon: 'image', onClick: () => navigate(`/tickets/${run.ticketId}/media?run=${run.id}`) },
-              { label: 'Export log', icon: 'down', href: `/api/runs/${run.id}/export`, download: true },
-              { label: 'Give Claude access', icon: 'plus', onClick: giveClaudeAccess, disabled: busy, title: 'Create a read-only API token and a brief to paste into Claude Code' },
-              { label: 'Ticket on GitHub', icon: 'external', href: run.ticketUrl },
-            ]}
-          />
         </div>
       </div>
-      <dl className="facts">
-        <Fact label="Model">{run.model.replace(/^claude-/, '')}</Fact>
-        <Fact label="Billing">{run.billing === 'api' ? `API${money(run.costUsd) ? ` · ${money(run.costUsd)}` : ''}` : 'Subscription'}</Fact>
-        <Fact label="Host">{run.environment ?? 'Removed'}</Fact>
-        <Fact label="Started">{clock(run.startedAt)}</Fact>
-        <Fact label={active ? 'Running for' : 'Took'}>{duration(run.startedAt, active ? now : (run.endedAt ?? now))}</Fact>
-        {used && <Fact label="Usage">{used.replace(' tokens', '')}</Fact>}
-        {run.attempt > 1 && <Fact label="Attempt">{run.attempt}</Fact>}
-      </dl>
-      {note && <p className="small muted">{note}</p>}
+      <div className="row small muted" style={{ columnGap: 16 }}>
+        <Status tone={status.tone}>{status.label}</Status>
+        <span>{run.model}</span>
+        <span>{run.billing === 'api' ? 'API billing' : 'Subscription'}</span>
+        <span>{run.environment ?? 'Removed host'}</span>
+        <span>
+          Started {clock(run.startedAt)}, {active ? `running ${duration(run.startedAt, now)}` : `took ${duration(run.startedAt, run.endedAt ?? now)}`}
+        </span>
+        {run.attempt > 1 && <span>Attempt {run.attempt}</span>}
+        {tokens((run.inputTokens ?? 0) + (run.outputTokens ?? 0) || null) && <span>{tokens((run.inputTokens ?? 0) + (run.outputTokens ?? 0))}</span>}
+        {run.billing === 'api' && money(run.costUsd) && <span>{money(run.costUsd)}</span>}
+        {run.status === 'paused' && run.pauseReason === 'threshold' && <span>Resumes when usage is under your limit{run.resetsAt ? `, by ${clock(run.resetsAt)}` : ''}</span>}
+        {run.status === 'paused' && (run.pauseReason ?? 'limit') === 'limit' && run.resetsAt && <span>Resumes after {clock(run.resetsAt)}</span>}
+        {run.status === 'paused' && run.pauseReason === 'connection' && <span>Moving to another Claude subscription</span>}
+        {working && run.pauseRequested && <span>Pauses after the current step</span>}
+      </div>
+      {pausedByYou && (
+        <p className="small muted">Resuming continues the same conversation; its first step re-reads the conversation so far, which uses some extra usage.</p>
+      )}
       {brief && (
         <Panel title="Brief for Claude Code">
           <div className="panel-body stack">
@@ -292,7 +285,7 @@ export function RunView() {
               <button type="button" onClick={() => setBrief(null)}>
                 Close
               </button>
-              <span className="small muted">Read-only, expires in 8 hours. Workshop won't show it again.</span>
+              <span className="small muted">Read-only, expires in 8 hours. Revoke it in Settings → API tokens. Workshop won't show this token again.</span>
             </div>
           </div>
         </Panel>
@@ -300,21 +293,17 @@ export function RunView() {
       <ErrorNote error={actionError} />
       {run.error && <p className="notice error">{run.error}</p>}
       {run.summary && <Markdown className="notice ok" text={run.summary} />}
-      {(showProgress || todos.length > 0) && (
-        <div className="split even">
-          {showProgress && <RunProgress run={run} t={transcript.current} now={now} />}
-          {todos.length > 0 && (
-            <Panel title="To-do list" count={todos.length}>
-              <ul className="todos panel-body">
-                {todos.map((t, i) => (
-                  <li key={i} className={t.status}>
-                    {t.content}
-                  </li>
-                ))}
-              </ul>
-            </Panel>
-          )}
-        </div>
+      {showProgress && <RunProgress run={run} t={transcript.current} now={now} />}
+      {todos.length > 0 && (
+        <Panel title="The agent's to-do list">
+          <ul className="todos panel-body">
+            {todos.map((t, i) => (
+              <li key={i} className={t.status}>
+                {t.content}
+              </li>
+            ))}
+          </ul>
+        </Panel>
       )}
       <div className="transcript">
         {items.length ? (
@@ -330,7 +319,7 @@ export function RunView() {
         )}
       </div>
       {active && !following && (
-        <button className="primary jump" onClick={() => window.scrollTo({ top: document.body.scrollHeight })}>
+        <button className="primary" style={{ position: 'fixed', right: 24, bottom: 24 }} onClick={() => window.scrollTo({ top: document.body.scrollHeight })}>
           Jump to live
         </button>
       )}

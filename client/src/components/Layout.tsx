@@ -3,25 +3,16 @@ import { NavLink, Outlet } from 'react-router';
 import type { Mode, Overview } from '../../../server/src/api-types.ts';
 import { api, useApi, useLiveState } from '../api.ts';
 import { tokens } from '../format.ts';
-import { Icon, type IconName } from './Icon.tsx';
 import { ThemeToggle } from './ThemeToggle.tsx';
-import { IconButton, Meter, Segmented } from './ui.tsx';
+import { Meter } from './ui.tsx';
 
-const NAV: { to: string; label: string; icon: IconName }[] = [
-  { to: '/', label: 'Home', icon: 'home' },
-  { to: '/tickets', label: 'Tickets', icon: 'board' },
-  { to: '/runs', label: 'Runs', icon: 'runs' },
-  { to: '/usage', label: 'Usage', icon: 'chart' },
-  { to: '/settings', label: 'Settings', icon: 'settings' },
-];
-
-export const MODES: { value: Mode; label: string }[] = [
+const MODES: { value: Mode; label: string }[] = [
   { value: 'paused', label: 'Paused' },
   { value: 'scheduled', label: 'Scheduled' },
   { value: 'always', label: 'Always on' },
 ];
 
-export function ModeSwitch({ mode, withinHours }: { mode: Mode; withinHours: boolean }) {
+function ModeSwitch({ mode, withinHours }: { mode: Mode; withinHours: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<Mode | null>(null);
   // Stay locked until the refreshed overview reports the requested mode.
@@ -34,7 +25,13 @@ export function ModeSwitch({ mode, withinHours }: { mode: Mode; withinHours: boo
   const hint = mode === 'paused' ? 'No new agents start' : mode === 'scheduled' && !withinHours ? 'Outside operating hours' : null;
   return (
     <div className="row">
-      <Segmented label="Operation mode" value={pending ?? mode} options={MODES} onChange={set} pending={pending !== null} />
+      <div className={`segmented${pending === null ? '' : ' pending'}`} role="group" aria-label="Operation mode" aria-busy={pending !== null}>
+        {MODES.map((m) => (
+          <button key={m.value} aria-pressed={(pending ?? mode) === m.value} disabled={pending !== null} onClick={() => set(m.value)}>
+            {m.label}
+          </button>
+        ))}
+      </div>
       {hint && <span className="muted small">{hint}</span>}
       {error && <span className="error-text small">{error}</span>}
     </div>
@@ -92,49 +89,54 @@ export function Layout({ version }: { version: string }) {
       <aside className="sidebar">
         <Brand className="brand" />
         <nav className="nav" aria-label="Main">
-          {NAV.map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.to === '/'}>
-              <Icon name={n.icon} size={18} />
-              <span>{n.label}</span>
-            </NavLink>
-          ))}
+          <NavLink to="/" end>
+            Dashboard
+          </NavLink>
+          <NavLink to="/tickets">Tickets</NavLink>
+          <NavLink to="/runs">Runs</NavLink>
+          <NavLink to="/usage">Usage</NavLink>
+          <NavLink to="/connections">Connections</NavLink>
+          <NavLink to="/agents">Agents</NavLink>
+          <NavLink to="/settings">Settings</NavLink>
+          <NavLink to="/alerts">
+            Alerts
+            {openAlerts > 0 && (
+              <span className="badge" aria-label={`${openAlerts} open`}>
+                {openAlerts}
+              </span>
+            )}
+          </NavLink>
         </nav>
         <div className="sidebar-foot">
           <ThemeToggle />
-          <IconButton icon="signout" label="Sign out" onClick={signOut} />
-          <span className="muted small version" title={`Version ${version}`}>
-            {version}
-          </span>
+          <button className="link small" onClick={signOut}>
+            Sign out
+          </button>
+          <span className="muted small">Version {version}</span>
         </div>
       </aside>
       <div className="main">
         <header className="topbar">
           <Brand className="topbar-brand" />
           {data && <ModeSwitch mode={data.mode} withinHours={data.withinHours} />}
-          <div className="topbar-meters">
-            {data?.allowance.map((a) => (
-              <div key={a.connectionId} className="row">
-                {data.allowance.length > 1 && <span className="small muted">{a.connectionName}</span>}
-                {a.unknown ? (
-                  <span className="small muted" title="Claude doesn't report this account's usage, so Workshop shows the tokens its agents used instead and can't hold them at your limits.">
-                    5h {tokens(a.tokens.fiveHour)} · week {tokens(a.tokens.sevenDay)}
-                  </span>
-                ) : a.sampledAt ? (
-                  <>
-                    <Meter label="5h" window={a.fiveHour} threshold={a.limits.fiveHour} />
-                    <Meter label="Week" window={a.sevenDay} threshold={a.limits.weekly} />
-                  </>
-                ) : (
-                  <span className="small muted">Usage not checked yet</span>
-                )}
-              </div>
-            ))}
-          </div>
-          {stalled && <span className="small muted">Reconnecting…</span>}
-          <NavLink to="/alerts" className={`icon-button bell${openAlerts ? ' has' : ''}`} aria-label={openAlerts ? `Alerts, ${openAlerts} open` : 'Alerts'} title="Alerts">
-            <Icon name="bell" size={18} />
-            {openAlerts > 0 && <span className="badge">{openAlerts}</span>}
-          </NavLink>
+          {data?.allowance.map((a) => (
+            <div key={a.connectionId} className="row">
+              {data.allowance.length > 1 && <span className="small muted">{a.connectionName}</span>}
+              {a.unknown ? (
+                <span className="small muted" title="Claude doesn't report this account's usage, so Workshop shows the tokens its agents used instead and can't hold them at your limits.">
+                  Usage unknown · 5-hour {tokens(a.tokens.fiveHour)} · weekly {tokens(a.tokens.sevenDay)}
+                </span>
+              ) : a.sampledAt ? (
+                <>
+                  <Meter label="5-hour" window={a.fiveHour} threshold={a.limits.fiveHour} />
+                  <Meter label="Weekly" window={a.sevenDay} threshold={a.limits.weekly} />
+                </>
+              ) : (
+                <span className="small muted">Allowance not checked yet</span>
+              )}
+            </div>
+          ))}
+          {stalled && <span className="small muted">Live updates paused. Reconnecting…</span>}
         </header>
         <main className="content">
           <Outlet />
