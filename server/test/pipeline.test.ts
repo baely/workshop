@@ -2017,6 +2017,38 @@ describe('run statistics', () => {
   });
 });
 
+describe('ticket totals', () => {
+  it("adds up a ticket's runs and takes the diff from its last push", async () => {
+    const { ticketTotals } = await import('../src/ticket-totals.ts');
+    run('DELETE FROM runs');
+    const add = (id: string, status: string, start: number, end: number | null, cost: number) =>
+      run("INSERT INTO runs (id, ticket_id, agent, attempt, model, billing, status, started_at, ended_at, cost_usd, input_tokens, output_tokens) VALUES (?, 1, 'implement', 1, 'm', 'subscription', ?, ?, ?, ?, 1000, 10)", id, status, start, end, cost);
+    add('one', 'failed', 1000, 61_000, 0.5);
+    add('two', 'succeeded', 100_000, 400_000, 1.25);
+    add('three', 'succeeded', 500_000, 560_000, 0.25);
+    run("INSERT INTO run_stats (run_id, turns, files, additions, deletions) VALUES ('one', 10, NULL, NULL, NULL), ('two', 40, 3, 120, 14), ('three', 5, NULL, NULL, NULL)");
+    try {
+      const [t] = ticketTotals(600_000).filter((x) => x.ticketId === 1);
+      expect(t).toMatchObject({
+        ticket: 'me/app#3',
+        runs: 3,
+        failedRuns: 1,
+        working: false,
+        agentMs: 60_000 + 300_000 + 60_000,
+        costUsd: 2,
+        tokens: 3030,
+        turns: 55,
+        firstStartedAt: 1000,
+        lastEndedAt: 560_000,
+        diff: { files: 3, additions: 120, deletions: 14 },
+      });
+    } finally {
+      run("DELETE FROM run_stats WHERE run_id IN ('one', 'two', 'three')");
+      run('DELETE FROM runs');
+    }
+  });
+});
+
 describe('launchNow', () => {
   const script = () => ({ prepare: ['ok'], run: [RATE, result({ outcome: 'done', summary: 'Done.', tests: 'ok' })], publish: [line({ before: '', after: 'def5678', ahead: 1 })] });
 

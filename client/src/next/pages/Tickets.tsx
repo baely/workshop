@@ -4,8 +4,9 @@ import type { Push, Size, Stage, TicketStatePatch, TicketView } from '../../../.
 import { api, useApi } from '../../api.ts';
 import { SyncButton } from '../../components/SyncButton.tsx';
 import { Icon } from '../components/Icon.tsx';
-import { ErrorNote, Menu, Modal, PageHead, Segmented, Status, Tag, useAction, type MenuItem } from '../components/ui.tsx';
+import { ErrorNote, Menu, Modal, PageHead, Segmented, Status, Tabs, Tag, useAction, type MenuItem } from '../components/ui.tsx';
 import { STAGE_TEXT, ticketStatus } from '../../format.ts';
+import { TICKET_TABS } from './TicketTotals.tsx';
 
 export const COLUMNS: { title: string; match: (t: TicketView) => boolean }[] = [
   { title: 'To classify', match: (t) => t.stage === null || t.stage === 'reclassify' },
@@ -230,6 +231,7 @@ export function Tickets() {
         </Link>
         <SyncButton action="/sync" label="Sync" title="Sync tickets from GitHub now" />
       </PageHead>
+      <Tabs label="Tickets" items={TICKET_TABS} />
       <div className="toolbar">
         <Segmented label="Show" value={filter} onChange={setFilter} options={FILTERS.map((f) => ({ value: f.label, label: <>{f.label} <span className="count">{inRepo.filter(f.match).length}</span></> }))} />
         <div className="search">

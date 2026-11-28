@@ -273,6 +273,34 @@ export interface RunView {
   diff: { files: number; additions: number; deletions: number } | null;
 }
 
+/** What every run on one ticket added up to. */
+export interface TicketTotals {
+  ticketId: number;
+  ticket: string;
+  title: string;
+  url: string;
+  state: 'open' | 'closed';
+  size: Size | null;
+  stage: Stage | null;
+  skipped: boolean;
+  failed: boolean;
+  prNumber: number | null;
+  prUrl: string | null;
+  runs: number;
+  failedRuns: number;
+  /** An agent is on it now. */
+  working: boolean;
+  /** Time agents spent on it, added over its runs. */
+  agentMs: number;
+  costUsd: number | null;
+  tokens: number | null;
+  turns: number | null;
+  firstStartedAt: number;
+  lastEndedAt: number | null;
+  /** The ticket's branch against the default branch after its last push; null when nothing was pushed. */
+  diff: { files: number; additions: number; deletions: number } | null;
+}
+
 export type PauseReason = 'limit' | 'threshold' | 'manual' | 'connection';
 
 export interface MediaItem {

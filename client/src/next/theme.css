@@ -2037,5 +2037,6 @@ a.turn-no:hover {
   color: var(--error-text);
 }
 .stat-value .changes {
-  font-size: 18px;
+  font-size: 15px;
+  line-height: 31px;
 }

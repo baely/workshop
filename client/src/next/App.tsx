@@ -20,6 +20,7 @@ import { SettingsLayout } from './pages/settings/index.tsx';
 import { Repositories } from './pages/settings/Repositories.tsx';
 import { Tokens } from './pages/settings/Tokens.tsx';
 import { Tickets } from './pages/Tickets.tsx';
+import { TicketTotalsPage } from './pages/TicketTotals.tsx';
 import { Usage } from '../pages/Usage.tsx';
 
 applyStoredTheme();
@@ -49,6 +50,7 @@ export function App() {
         <Route element={<Layout version={auth.version} />}>
           <Route index element={<Dashboard />} />
           <Route path="tickets" element={<Tickets />} />
+          <Route path="tickets/all" element={<TicketTotalsPage />} />
           <Route path="tickets/:id" element={<Ticket />} />
           <Route path="tickets/:id/media" element={<Media />} />
           <Route path="dependencies" element={<Dependencies />} />
