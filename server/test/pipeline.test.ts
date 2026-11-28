@@ -1987,6 +1987,36 @@ describe('usage of a session that ends without a result', () => {
   });
 });
 
+describe('run statistics', () => {
+  it('keeps the turns each session took and what the run pushed', async () => {
+    fake.vcs.diffStats = vi.fn(async () => ({ files: 3, additions: 120, deletions: 14 }));
+    fake.env = new FakeEnv({
+      prepare: ['ok'],
+      run: [line({ type: 'result', subtype: 'success', is_error: false, num_turns: 42, structured_output: { outcome: 'done', summary: 'ok', tests: 'ok' }, usage: { input_tokens: 10, output_tokens: 5 } })],
+      publish: [line({ before: 'abc1234', after: 'def5678', ahead: 1 })],
+    });
+    const id = go();
+    await settle(id);
+    expect(fake.vcs.diffStats).toHaveBeenCalledWith(expect.anything(), 'abc1234', 'def5678');
+    expect(runView(id)).toMatchObject({ turns: 42, diff: { files: 3, additions: 120, deletions: 14 } });
+  });
+
+  it('compares a first push with the default branch, and shrugs off a host that cannot count', async () => {
+    fake.vcs.diffStats = vi.fn(async () => {
+      throw new Error('nope');
+    });
+    fake.env = new FakeEnv({
+      prepare: ['ok'],
+      run: [result({ outcome: 'done', summary: 'ok', tests: 'ok' })],
+      publish: [line({ before: '', after: 'def5678', ahead: 1 })],
+    });
+    const id = go();
+    expect((await settle(id)).status).toBe('succeeded');
+    expect(fake.vcs.diffStats).toHaveBeenCalledWith(expect.anything(), 'main', 'def5678');
+    expect(runView(id)).toMatchObject({ turns: null, diff: null });
+  });
+});
+
 describe('launchNow', () => {
   const script = () => ({ prepare: ['ok'], run: [RATE, result({ outcome: 'done', summary: 'Done.', tests: 'ok' })], publish: [line({ before: '', after: 'def5678', ahead: 1 })] });
 

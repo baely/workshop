@@ -7,6 +7,7 @@ import { Markdown } from '../../components/Markdown.tsx';
 import { Icon } from '../components/Icon.tsx';
 import { ErrorNote, Menu, Panel, Progress, Status } from '../components/ui.tsx';
 import { runNote } from './Dashboard.tsx';
+import { Diff } from './Runs.tsx';
 import { AGENT_LABEL, clock, duration, money, runStatus, tokens } from '../../format.ts';
 import { LiveStream } from '../../live.ts';
 import { addEntry, emptyTranscript, type Item, type Transcript } from '../../transcript.ts';
@@ -273,11 +274,18 @@ export function RunView() {
       </div>
       <dl className="facts">
         <Fact label="Model">{run.model.replace(/^claude-/, '')}</Fact>
-        <Fact label="Billing">{run.billing === 'api' ? `API${money(run.costUsd) ? ` · ${money(run.costUsd)}` : ''}` : 'Subscription'}</Fact>
+        <Fact label="Billing">{run.billing === 'api' ? 'API' : 'Subscription'}</Fact>
+        {run.costUsd ? <Fact label={run.billing === 'api' ? 'Cost' : 'Cost at API prices'}>{money(run.costUsd)}</Fact> : null}
         <Fact label="Host">{run.environment ?? 'Removed'}</Fact>
         <Fact label="Started">{clock(run.startedAt)}</Fact>
         <Fact label={active ? 'Running for' : 'Took'}>{duration(run.startedAt, active ? now : (run.endedAt ?? now))}</Fact>
         {used && <Fact label="Usage">{used.replace(' tokens', '')}</Fact>}
+        {run.turns !== null && <Fact label="Turns">{run.turns}{run.maxTurns ? ` of ${run.maxTurns}` : ''}</Fact>}
+        {run.diff && (
+          <Fact label="Changes">
+            <Diff diff={run.diff} />
+          </Fact>
+        )}
         {run.attempt > 1 && <Fact label="Attempt">{run.attempt}</Fact>}
       </dl>
       {note && <p className="small muted">{note}</p>}

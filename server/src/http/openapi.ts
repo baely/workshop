@@ -166,6 +166,8 @@ const schemas: Record<string, Schema> = {
     timeoutMin: nullable(int),
     stepStartedAt: nullable(int),
     publishRetryAt: nullable(int),
+    turns: nullable(int),
+    diff: nullable(object({ files: int, additions: int, deletions: int })),
   }),
   TicketRef: object({ ref: str, ticketId: nullable(int) }),
   TicketView: object({

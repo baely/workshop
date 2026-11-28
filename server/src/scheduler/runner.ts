@@ -15,6 +15,7 @@ import type { ContainerState, CreatedTicket, Environment, StepSpec } from '../pr
 import { collectAgentMedia, deleteMedia, fetchTicketImages, listMedia, mediaFiles, warn, type IssueImage } from '../media.ts';
 import { ACTIVE_STATUSES, activity, appendLog, getRun, linesFrom, readLog, type RunRow } from '../runs.ts';
 import { getSettings } from '../settings.ts';
+import { addTurns, setDiff } from '../run-stats.ts';
 import { estimateCost, recordSpend } from '../spend.ts';
 import {
   addLinks,
@@ -520,6 +521,7 @@ async function runAgent(ctx: Ctx): Promise<boolean> {
   publish('runs');
   const res = claude.result;
   // A session that was killed or paused prints no result, so its usage comes from the responses counted on the way.
+  addTurns(r.id, res?.turns ?? claude.ownResponses ?? 0);
   if (res) recordSpend(r, res);
   else if (claude.spent?.responses) recordSpend(r, { ...claude.spent, costUsd: estimateCost(r.model, claude.spent.inputTokens + claude.spent.outputTokens) });
   if (getRun(r.id)!.status !== 'running') return false; // stopped while it ran
@@ -829,6 +831,10 @@ async function publishRun(ctx: Ctx) {
       if (exitCode === 0 || pushed.rescued) {
         state.pushed = pushed;
         setRun(r.id, { publish_state: JSON.stringify(state) });
+        // What this run's commits changed, for the Runs page. Never worth failing a publish over.
+        if (exitCode === 0 && pushed.after && pushed.after !== pushed.before) {
+          await vcs.diffStats?.(repo, pushed.before || ctx.repo.default_branch, pushed.after).then((diff) => setDiff(r.id, diff), (err) => warn(r.id, `Workshop couldn't count what this run changed: ${(err as Error).message}`));
+        }
       }
     }
     if (exitCode !== 0 && pushed.rescued) {

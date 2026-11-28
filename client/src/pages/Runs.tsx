@@ -24,7 +24,9 @@ export function Runs() {
                 <th>Host</th>
                 <th>Status</th>
                 <th>Took</th>
+                <th>Turns</th>
                 <th>Usage</th>
+                <th>Changes</th>
               </tr>
             </thead>
             <tbody>
@@ -47,10 +49,12 @@ export function Runs() {
                     <Status tone={runStatus(r).tone}>{runStatus(r).label}</Status>
                   </td>
                   <td className="small">{duration(r.startedAt, r.endedAt ?? now)}</td>
+                  <td className="small">{r.turns ?? '–'}</td>
                   <td className="small muted">
                     {tokens((r.inputTokens ?? 0) + (r.outputTokens ?? 0) || null)}
-                    {r.billing === 'api' && r.costUsd !== null && <div>{money(r.costUsd)}</div>}
+                    {r.costUsd ? <div title="At API prices">{money(r.costUsd)}</div> : null}
                   </td>
+                  <td className="small">{r.diff ? `+${r.diff.additions} −${r.diff.deletions} · ${r.diff.files} ${r.diff.files === 1 ? 'file' : 'files'}` : '–'}</td>
                 </tr>
               ))}
             </tbody>

@@ -2025,4 +2025,17 @@ a.turn-no:hover {
     min-width: 0;
     grid-template-columns: 1fr 80px;
   }
+/* Lines added and removed */
+.changes {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.changes .plus {
+  color: var(--ok);
+}
+.changes .minus {
+  color: var(--error-text);
+}
+.stat-value .changes {
+  font-size: 18px;
 }

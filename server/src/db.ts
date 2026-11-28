@@ -342,6 +342,8 @@ export function initDb(file: string): DatabaseSync {
       throw err;
     }
   }
+  // Kept out of MIGRATIONS on purpose: see run-stats.ts.
+  db.exec('CREATE TABLE IF NOT EXISTS run_stats (run_id TEXT PRIMARY KEY, turns INTEGER, files INTEGER, additions INTEGER, deletions INTEGER)');
   return db;
 }
 

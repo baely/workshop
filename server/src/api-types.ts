@@ -267,6 +267,10 @@ export interface RunView {
   stepStartedAt: number | null;
   /** The agent finished, but GitHub failed while publishing: when Workshop tries again. Such a run holds no agent slot. */
   publishRetryAt: number | null;
+  /** How many turns the agent took, over every session of the run; null when Workshop didn't see any. */
+  turns: number | null;
+  /** What the run's own commits changed; null for a run that pushed nothing (or from before Workshop kept this). */
+  diff: { files: number; additions: number; deletions: number } | null;
 }
 
 export type PauseReason = 'limit' | 'threshold' | 'manual' | 'connection';
