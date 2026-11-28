@@ -339,7 +339,7 @@ function backlog(
 ): BacklogProjection {
   const open = all<TicketRow>(openTicketsSql).flatMap((t) => {
     const repo = getRepo(t.repo_id)!;
-    if (!isAllowedAuthor(t.author) || !ticketInScope(t, repo)) return [];
+    if (!isAllowedAuthor(t.author, repo) || !ticketInScope(t, repo)) return [];
     const state = parseLabels(labelsOf(t));
     if (state.needsInfo || state.skip || state.failed || state.stage === 'pr-review') return [];
     return [state];

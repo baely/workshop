@@ -384,7 +384,7 @@ async function syncRepos(due: RepoRow[], track: boolean) {
 export function settleManual() {
   for (const t of all<TicketRow>('SELECT * FROM tickets WHERE push IS NOT NULL')) {
     const repo = getRepo(t.repo_id);
-    if (!repo?.enabled || !isAllowedAuthor(t.author) || !inScope(repo.selection, labelsOf(t)) || pushEnded(t.push!, t.push_stage, labelsOf(t), t.state === 'open')) setPush(t, null);
+    if (!repo?.enabled || !isAllowedAuthor(t.author, repo) || !inScope(repo.selection, labelsOf(t)) || pushEnded(t.push!, t.push_stage, labelsOf(t), t.state === 'open')) setPush(t, null);
   }
   for (const t of all<TicketRow>("SELECT * FROM tickets WHERE prioritised = 1 AND state = 'closed'")) setPrioritised(t, false);
   for (const t of all<TicketRow>("SELECT * FROM tickets WHERE bypass_limits = 1 AND state = 'closed'")) setBypassLimits(t, false);
@@ -395,7 +395,7 @@ export async function mergeApproved(pushedOnly: boolean) {
   for (const t of all<TicketRow>(openTicketsSql)) {
     if (pushedOnly && !t.push) continue;
     const repo = getRepo(t.repo_id)!;
-    if (!isAllowedAuthor(t.author) || !ticketInScope(t, repo) || nextStep(parseLabels(labelsOf(t)), true)?.kind !== 'merge' || activeRunId(t.id)) continue;
+    if (!isAllowedAuthor(t.author, repo) || !ticketInScope(t, repo) || nextStep(parseLabels(labelsOf(t)), true)?.kind !== 'merge' || activeRunId(t.id)) continue;
     if (blockersOf(t).length) continue; // an approved pull request waits for its blockers too
     try {
       await advanceMerge(t);
@@ -595,7 +595,7 @@ export function buildQueue(s: Settings = getSettings(), now = Date.now(), opts: 
   const out: (Candidate & { priority: number; repoPriority: number; boosted: boolean })[] = [];
   for (const t of rows) {
     const repo = repos.get(t.repo_id)!;
-    if (!isAllowedAuthor(t.author) || !ticketInScope(t, repo) || active.has(t.id)) continue;
+    if (!isAllowedAuthor(t.author, repo) || !ticketInScope(t, repo) || active.has(t.id)) continue;
     const step = nextStep(parseLabels(labelsOf(t)), true);
     if (!step) continue;
     if (step.kind === 'merge' && t.pr_status !== 'conflict') continue; // merged through the API, no agent needed

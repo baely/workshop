@@ -321,6 +321,7 @@ export const MIGRATIONS = [
   ALTER TABLE repos ADD COLUMN rework_on TEXT NOT NULL DEFAULT 'severe'; -- severe, moderate or minor: the lowest code review severity that sends a ticket back
   ALTER TABLE tickets ADD COLUMN follow_ups TEXT; -- JSON: code review findings to open as tickets once the work is pushed to the default branch
   `,
+  `ALTER TABLE repos ADD COLUMN any_author INTEGER NOT NULL DEFAULT 0; -- work on tickets whoever opened them, not only the authors in Settings`,
 ];
 
 export let db: DatabaseSync;

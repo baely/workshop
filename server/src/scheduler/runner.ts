@@ -271,7 +271,10 @@ async function runSpec(ctx: Ctx, agent: AgentRow) {
       warn(r.id, `Workshop skipped the images in the issue: ${(err as Error).message}`);
     }
     const comments = await source.comments(repo, t.number);
-    const included = comments.filter((c) => isAllowedAuthor(c.author) || c.author === source.selfLogin());
+    // Comments stay with the authors you allow, even where tickets come from anyone: a comment is an instruction to
+    // the agent. The one exception there is the ticket's own author, who asked for the work.
+    const asker = ctx.repo.any_author ? t.author.toLowerCase() : null;
+    const included = comments.filter((c) => isAllowedAuthor(c.author) || c.author === source.selfLogin() || c.author.toLowerCase() === asker);
     await fetchTicketImages(r.id, t.id, included.flatMap((c) => (c.images ?? []).map((ref): IssueImage => ({ source: 'comment', ref }))));
     const review = t.pr_number && r.agent !== 'merge' ? await vcsFor(ctx.repo).reviewFeedback(repo, t.pr_number, getSettings().authors) : [];
     await fetchTicketImages(r.id, t.id, review.flatMap((c) => (c.images ?? []).map((ref): IssueImage => ({ source: 'comment', ref }))));
@@ -288,7 +291,7 @@ async function runSpec(ctx: Ctx, agent: AgentRow) {
           "SELECT number, title, body, author, labels FROM tickets WHERE repo_id = ? AND state = 'open' AND id != ? ORDER BY updated_at DESC",
           ctx.repo.id,
           t.id,
-        ).filter((o) => isAllowedAuthor(o.author))
+        ).filter((o) => isAllowedAuthor(o.author, ctx.repo))
       : [];
     if (indexed) {
       files[INDEX_PATH.replace('/work/', '')] = open
@@ -702,7 +705,7 @@ async function raiseBlockers(ctx: Ctx, t: TicketRow, wanted: Noticed[], agent: A
     const closed = new Set(all<{ number: number }>("SELECT number FROM tickets WHERE repo_id = ? AND state != 'open'", t.repo_id).map((x) => x.number));
     const candidates = [
       ...others
-        .filter((o) => labelsOf(o).includes(label.raised) && isAllowedAuthor(o.author) && !blockersOf(o).some((b) => refKey(b, ctx.repo.full_name) === self))
+        .filter((o) => labelsOf(o).includes(label.raised) && isAllowedAuthor(o.author, ctx.repo) && !blockersOf(o).some((b) => refKey(b, ctx.repo.full_name) === self))
         .map((o) => ({ number: o.number, title: o.title, body: o.body })),
       ...before.filter((x) => x.number !== t.number && !closed.has(x.number)).map((x) => ({ number: x.number, title: x.title, body: '' })),
     ];

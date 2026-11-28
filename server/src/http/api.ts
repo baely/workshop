@@ -254,7 +254,7 @@ apiRouter.post('/tickets/:id/launch', (req, res) => {
 function pushableTicket(id: string) {
   const t = getTicket(Number(id));
   const repo = t && getRepo(t.repo_id);
-  check(t && repo?.enabled && isAllowedAuthor(t.author), 'Ticket not found.', 404);
+  check(t && repo?.enabled && isAllowedAuthor(t.author, repo), 'Ticket not found.', 404);
   return { t: t!, repo: repo! };
 }
 

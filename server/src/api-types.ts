@@ -96,6 +96,8 @@ export interface RepoView {
   mergeWarning: string | null;
   /** Agents may report work they noticed outside their ticket, and Workshop opens a ticket for each. */
   raiseTickets: boolean;
+  /** Work on tickets whoever opened them, not only the ticket authors in Settings. */
+  anyAuthor: boolean;
   /** Push reviewed work straight to the default branch as one commit, with no pull request and no review by you. */
   pushToDefault: boolean;
   /** The lowest code review severity that sends a ticket back to design or implementation. */

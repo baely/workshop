@@ -307,7 +307,7 @@ function RepoRow({ repo, onChange }: { repo: RepoView; onChange: (id: number, bo
     setEnabling(enabled);
     onChange(repo.id, { enabled }).finally(() => setEnabling(null));
   };
-  const saved = (): RepoDraft => ({ selection: repo.selection, priority: String(repo.priority), image: repo.image ?? '', mergeWithoutReview: repo.mergeWithoutReview, raiseTickets: repo.raiseTickets, pushToDefault: repo.pushToDefault, reworkOn: repo.reworkOn });
+  const saved = (): RepoDraft => ({ selection: repo.selection, priority: String(repo.priority), image: repo.image ?? '', mergeWithoutReview: repo.mergeWithoutReview, raiseTickets: repo.raiseTickets, pushToDefault: repo.pushToDefault, reworkOn: repo.reworkOn, anyAuthor: repo.anyAuthor });
   const [draft, setDraft] = useState(saved);
   const [saving, setSaving] = useState(false);
   const changes = repoChanges(repo, draft);
@@ -374,6 +374,10 @@ function RepoRow({ repo, onChange }: { repo: RepoView; onChange: (id: number, bo
             <label className="row small" title="When an agent comes across a problem outside its ticket, or work its ticket needs first, Workshop opens a ticket for it.">
               <input type="checkbox" checked={draft.raiseTickets} onChange={(e) => setDraft({ ...draft, raiseTickets: e.target.checked })} />
               <span className="muted">Agents open tickets for what they notice</span>
+            </label>
+            <label className="row small" title="Workshop works on tickets here whoever opened them, not only your ticket authors. Agents still read comments only from your ticket authors and the ticket's own author.">
+              <input type="checkbox" checked={draft.anyAuthor} onChange={(e) => setDraft({ ...draft, anyAuthor: e.target.checked })} />
+              <span className="muted">Tickets from anyone</span>
             </label>
             <label className="row small" title="Reviewed work goes on the default branch as one commit. No pull request is opened and nothing waits for you.">
               <input type="checkbox" checked={draft.pushToDefault} onChange={(e) => setDraft({ ...draft, pushToDefault: e.target.checked })} />
