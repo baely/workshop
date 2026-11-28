@@ -1,6 +1,6 @@
 // Types shared with the client (imported type-only). Keep this file free of runtime imports.
 
-export type Topic = 'runs' | 'tickets' | 'alerts' | 'connections' | 'settings' | 'allowance' | 'repos' | 'agents' | 'tokens' | 'media';
+export type Topic = 'runs' | 'tickets' | 'alerts' | 'connections' | 'settings' | 'allowance' | 'repos' | 'agents' | 'tokens' | 'media' | 'activity';
 
 export type Mode = 'paused' | 'scheduled' | 'always';
 

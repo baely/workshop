@@ -92,7 +92,7 @@ function setupSteps(connections: ConnectionView[], repos: RepoView[], settings: 
 }
 
 export function Dashboard() {
-  const { data, error } = useApi<Overview>('/overview', ['runs', 'tickets', 'alerts', 'connections', 'settings', 'allowance', 'agents', 'repos']);
+  const { data, error } = useApi<Overview>('/overview', ['runs', 'activity', 'tickets', 'alerts', 'connections', 'settings', 'allowance', 'agents', 'repos']);
   const { data: connections } = useApi<ConnectionView[]>('/connections', ['connections']);
   const { data: repos } = useApi<RepoView[]>('/repos', ['repos']);
   const { data: settings } = useApi<Settings>('/settings', ['settings']);
