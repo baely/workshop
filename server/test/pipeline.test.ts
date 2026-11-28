@@ -25,7 +25,7 @@ const { createConnection, reorderConnections, setConnectionPaused, setConnection
 const { bus } = await import('../src/events.ts');
 const { activity, getRun, readLog, runView } = await import('../src/runs.ts');
 const { sweepMedia } = await import('../src/media.ts');
-const { connectionPaused, drive, isDriving, launch, onRunSettled, PAUSE_GRACE_MS, requestPause, resume, stopRun } = await import('../src/scheduler/runner.ts');
+const { checkRaiseRate, connectionPaused, drive, isDriving, launch, onRunSettled, PAUSE_GRACE_MS, requestPause, resume, stopRun } = await import('../src/scheduler/runner.ts');
 const { allocate, allocatePass, buildQueue, forgetProbe, hostLoads, hostViews, kick, launchNow, mergeApproved, probeAllowance, queueView, reattachRuns, refreshNow, resumeNow, resumePaused, settleManual, syncSoon, tick } = await import('../src/scheduler/loop.ts');
 const { setBypassLimits, setPrioritised, setPush, getTicket, ticketView, getRepo, partsOf } = await import('../src/tickets.ts');
 const { checkingBlockers, syncRepo, HELD_CHECKS_PER_SYNC, LINK_BACKFILL_PER_SYNC } = await import('../src/scheduler/sync.ts');
@@ -3090,7 +3090,10 @@ describe('tickets for what agents notice', () => {
     let next = 40;
     fake.tickets.createTicket = vi.fn(async () => ({ number: ++next, url: `https://github.com/me/app/issues/${next}` }));
   });
-  afterEach(() => run('UPDATE repos SET raise_tickets = 0 WHERE id = 1'));
+  afterEach(() => {
+    run('UPDATE repos SET raise_tickets = 0 WHERE id = 1');
+    run('DELETE FROM tickets WHERE id != 1');
+  });
 
   it('opens a ticket for each, labelled and traced back, and says so on the ticket', async () => {
     fake.env = env();
@@ -3186,7 +3189,7 @@ describe('raising blockers', () => {
     expect(comment).toContain('Workshop will wait for the prerequisite tickets listed below');
     expect(comment).toContain('Prerequisite tickets this one waits for:\n- #41 Save outcome modifiers');
     expect(comment).not.toContain('Noticed outside this ticket');
-    expect(JSON.parse(getTicket(1)!.raised!)).toEqual([{ number: 41, url: 'https://github.com/me/app/issues/41', title: 'Save outcome modifiers', runId: r.id, blocker: true }]);
+    expect(JSON.parse(getTicket(1)!.raised!)).toEqual([{ number: 41, url: 'https://github.com/me/app/issues/41', title: 'Save outcome modifiers', runId: r.id, blocker: true, at: expect.any(Number) }]);
 
     fake.tickets.listChanged = async () => [];
     fake.tickets.blockers = vi.fn(async () => [{ repo: 'me/app', number: 41, state: 'closed', url: '' }]);
@@ -3308,6 +3311,216 @@ describe('raising blockers', () => {
     reattachRuns();
     expect(await settle(id)).toMatchObject({ status: 'succeeded' });
     expect(fake.tickets.comment).toHaveBeenLastCalledWith(expect.anything(), 3, expect.stringContaining('- #41 Save outcome modifiers'));
+  });
+
+  describe('the open-ticket index', () => {
+    const index = (e: InstanceType<typeof FakeEnv>) => e.started.find((s) => s.cmd?.[0] === 'run')!.files!['.workshop/open-tickets.jsonl'];
+    beforeEach(() => {
+      for (let i = 0; i < 35; i++) {
+        run(
+          "INSERT INTO tickets (repo_id, number, title, body, url, author, state, labels, updated_at) VALUES (1, ?, ?, ?, 'u', 'me', 'open', ?, ?)",
+          100 + i,
+          `Open ticket ${100 + i}`,
+          'b'.repeat(600),
+          JSON.stringify(i === 0 ? [label.raised] : []),
+          `2026-10-${String(10 + Math.floor(i / 10)).padStart(2, '0')}T00:00:${String(i).padStart(2, '0')}Z`,
+        );
+      }
+      run("INSERT INTO tickets (repo_id, number, title, body, url, author, state, labels, updated_at) VALUES (1, 99, 'From a stranger', '', 'u', 'stranger', 'open', '[]', '2026-10-20T00:00:00Z')");
+    });
+
+    it('gives the Classifier every open ticket, beyond the ones in its prompt', async () => {
+      await settle(classify({ raise_blockers: undefined, blocked_by: [2] }));
+      const lines = String(index(fake.env)).trim().split('\n').map((l) => JSON.parse(l));
+      expect(lines).toHaveLength(35);
+      expect(lines[0].number).toBe(134); // most recently updated first
+      expect(lines.at(-1)).toEqual({ number: 100, title: 'Open ticket 100', labels: [label.raised], body: 'b'.repeat(500) });
+      const prompt = file(fake.env, '.workshop/prompt.md');
+      expect(prompt).not.toContain('#100: Open ticket 100');
+      expect(prompt).toContain('#134: Open ticket 134');
+      expect(prompt).toContain('All 35 open tickets are in `/work/.workshop/open-tickets.jsonl`.');
+      expect(prompt).toContain('search `/work/.workshop/open-tickets.jsonl`');
+    });
+
+    it('gives it to Design when it may raise prerequisites, and not otherwise', async () => {
+      run('UPDATE tickets SET labels = ? WHERE id = 1', JSON.stringify([label.size('l'), label.stage('design')]));
+      const design = () => {
+        fake.env = new FakeEnv({ prepare: ['ok'], run: [result({ outcome: 'done', summary: 'Done.' })], publish: [line({ before: 'aaa', after: 'bbb', ahead: 1 })] });
+        return settle(go('design'));
+      };
+      await design();
+      expect(String(index(fake.env)).trim().split('\n')).toHaveLength(35);
+      expect(file(fake.env, '.workshop/system.md')).toContain('search `/work/.workshop/open-tickets.jsonl`');
+      run('DELETE FROM runs');
+      run('UPDATE repos SET raise_tickets = 0 WHERE id = 1');
+      run('UPDATE tickets SET labels = ? WHERE id = 1', JSON.stringify([label.size('l'), label.stage('design')]));
+      await design();
+      expect(index(fake.env)).toBeUndefined();
+    });
+
+    it("doesn't give it to the Code reviewer", async () => {
+      await review();
+      expect(index(fake.env)).toBeUndefined();
+    });
+  });
+
+  describe('similar open tickets', () => {
+    const insertWith = (n: number, title: string, body: string, labels: string[] = [label.raised], blocked = '[]') =>
+      run("INSERT INTO tickets (repo_id, number, title, body, url, author, state, labels, blocked_by, updated_at) VALUES (1, ?, ?, ?, 'u', 'me', 'open', ?, ?, '2026-10-13T00:00:00Z')", n, title, body, JSON.stringify(labels), blocked);
+
+    it('links a similar open raised ticket instead of opening one, and logs the match', async () => {
+      insertWith(12, 'Outcome modifiers for saving throws', 'Effects change what a save does.');
+      const r = await settle(classify());
+      expect(r.status).toBe('succeeded');
+      expect(fake.tickets.createTicket).not.toHaveBeenCalled();
+      expect(fake.tickets.addBlocker).toHaveBeenCalledWith(expect.anything(), 3, 12);
+      expect(blockedBy()).toBe('["#12"]');
+      expect(fake.tickets.comment).toHaveBeenCalledWith(
+        expect.anything(),
+        3,
+        expect.stringContaining('- #12 Outcome modifiers for saving throws (linked existing #12 instead of opening a new ticket for "Save outcome modifiers")'),
+      );
+      expect(readLog(r.id).map((e) => e.text)).toContainEqual(expect.stringMatching(/^Linked existing #12 "Outcome modifiers for saving throws" instead of opening "Save outcome modifiers" \(title 0\.75 with 3 shared keywords, text 0\.\d\d\)\.$/));
+      expect(getTicket(1)!.raised).toBeNull();
+    });
+
+    it('still opens a ticket for a clearly different mechanism', async () => {
+      insertWith(12, 'Login page crashes on an empty password', 'src/login.ts:40 reads password.length without a guard.');
+      await settle(classify());
+      expect(fake.tickets.createTicket).toHaveBeenCalledTimes(1);
+      expect(fake.tickets.addBlocker).toHaveBeenCalledWith(expect.anything(), 3, 41);
+    });
+
+    it("doesn't match a similar ticket that already waits for this one", async () => {
+      insertWith(13, 'Outcome modifiers for saving throws', '', [label.raised], '["#3"]');
+      await settle(classify());
+      expect(fake.tickets.createTicket).toHaveBeenCalledTimes(1);
+      expect(fake.tickets.addBlocker.mock.calls.map((c: unknown[]) => c[2])).toEqual([41]);
+    });
+
+    it("doesn't match a similar ticket from an author outside the allowlist", async () => {
+      run("INSERT INTO tickets (repo_id, number, title, body, url, author, state, labels, updated_at) VALUES (1, 14, 'Outcome modifiers for saving throws', '', 'u', 'stranger', 'open', '[]', '2026-10-13T00:00:00Z')");
+      await settle(classify());
+      expect(fake.tickets.createTicket).toHaveBeenCalledTimes(1);
+    });
+
+    it("doesn't match a similar ticket that agents didn't raise", async () => {
+      insertWith(12, 'Outcome modifiers for saving throws', 'Effects change what a save does.', []);
+      await settle(classify());
+      expect(fake.tickets.createTicket).toHaveBeenCalledTimes(1);
+      expect(fake.tickets.addBlocker.mock.calls.map((c: unknown[]) => c[2])).toEqual([41]);
+    });
+
+    it('stores a ticket it opens at once, from the reply, so a raise from another ticket before the next sync links it', async () => {
+      fake.tickets.createTicket = vi.fn(async () => ({ number: 41, url: 'https://github.com/me/app/issues/41', nodeId: 'I_41', author: 'bot[bot]', createdAt: '2026-11-28T00:00:00Z', updatedAt: '2026-11-28T00:00:01Z' }));
+      await settle(classify());
+      expect(one<any>('SELECT * FROM tickets WHERE repo_id = 1 AND number = 41')).toMatchObject({
+        node_id: 'I_41',
+        title: 'Save outcome modifiers',
+        body: expect.stringContaining('changes a save outcome'),
+        url: 'https://github.com/me/app/issues/41',
+        author: 'bot[bot]',
+        state: 'open',
+        labels: JSON.stringify([label.raised]),
+        created_at: '2026-11-28T00:00:00Z',
+        updated_at: '2026-11-28T00:00:01Z',
+      });
+
+      run("INSERT INTO tickets (repo_id, number, title, body, url, author, state, labels, updated_at) VALUES (1, 4, 'Add a cleric domain', '', 'u', 'me', 'open', '[]', '2026-10-13T00:00:00Z')");
+      const other = one<{ id: number }>('SELECT id FROM tickets WHERE repo_id = 1 AND number = 4')!.id;
+      fake.env = new FakeEnv({ prepare: ['ok'], run: [result({ decision: 'blocked', raise_blockers: [{ title: 'Modifiers for the outcome of a saving throw', body: 'Same thing.' }], reason: 'Needs it.' })] });
+      const r = await settle(launch({ ticketId: other, agent: 'classifier', mode: 'normal', attempt: 1, environmentId: ids.env, modelConnectionId: ids.model, model: 'claude-sonnet-5-5', billing: 'subscription' })!);
+      expect(r.status).toBe('succeeded');
+      expect(fake.tickets.createTicket).toHaveBeenCalledTimes(1);
+      expect(fake.tickets.addBlocker).toHaveBeenLastCalledWith(expect.anything(), 4, 41);
+      expect(readLog(r.id).map((e) => e.text)).toContainEqual(expect.stringMatching(/^Linked existing #41 "Save outcome modifiers"/));
+    });
+
+    it('falls back to its own login and the current time when the reply lacks them', async () => {
+      await settle(classify());
+      expect(one<any>('SELECT author, state, created_at FROM tickets WHERE repo_id = 1 AND number = 41')).toMatchObject({ author: 'bot[bot]', state: 'open', created_at: expect.any(String) });
+    });
+
+    it('makes no GitHub request for the check: a match costs only the addBlocker a plain blocked_by makes', async () => {
+      insertWith(12, 'Outcome modifiers for saving throws', 'Effects change what a save does.');
+      const record = () => {
+        const calls: string[] = [];
+        const real = fake.tickets;
+        fake.tickets = new Proxy(real, {
+          get: (target, key) => {
+            const v = target[key];
+            return typeof v === 'function' && key !== 'selfLogin' ? (...a: unknown[]) => (calls.push(String(key)), v.apply(target, a)) : v;
+          },
+        });
+        return () => ((fake.tickets = real), calls);
+      };
+      let stop = record();
+      await settle(classify({ raise_blockers: undefined, blocked_by: [12] }));
+      const plain = stop();
+      run("UPDATE tickets SET labels = '[]', blocked_by = '[]' WHERE id = 1");
+      run('DELETE FROM runs');
+      stop = record();
+      await settle(classify());
+      const matched = stop();
+      expect(fake.tickets.createTicket).not.toHaveBeenCalled();
+      expect(matched).toEqual(plain);
+      expect(matched.filter((c) => c === 'addBlocker')).toHaveLength(1);
+      expect(matched).not.toContainEqual(expect.stringMatching(/^(listChanged|blockers|createTicket)$/));
+    });
+
+    it('collapses two similar proposals from one run into one ticket', async () => {
+      await settle(classify({ raise_blockers: [prerequisite, { title: 'Modifiers of save outcomes', body: 'Same thing.' }] }));
+      expect(fake.tickets.createTicket).toHaveBeenCalledTimes(1);
+      expect(fake.tickets.addBlocker.mock.calls.map((c: unknown[]) => c[2])).toEqual([41]);
+    });
+  });
+
+  describe('the raise-rate alert', () => {
+    const seed = (n: number, at: number) =>
+      run('UPDATE tickets SET raised = ? WHERE id = 1', JSON.stringify(Array.from({ length: n }, (_, i) => ({ number: 200 + i, url: 'u', title: `T${i}`, runId: 'r', at }))));
+    const alerts = () => all<{ message: string; ack_at: number | null }>("SELECT message, ack_at FROM alerts WHERE kind = 'raise-rate' AND ref = 'repo:1'");
+    afterEach(() => saveSettings({ raiseAlertPerHour: 10 }));
+
+    it('fires above the limit and clears once the hour has passed', () => {
+      seed(10, Date.now());
+      checkRaiseRate(getRepo(1)!);
+      expect(alerts()).toEqual([]);
+      seed(11, Date.now());
+      checkRaiseRate(getRepo(1)!);
+      checkRaiseRate(getRepo(1)!);
+      expect(alerts()).toEqual([{ message: expect.stringContaining('Agents opened 11 tickets in me/app in the last hour, more than the limit of 10.'), ack_at: null }]);
+      seed(11, Date.now() - 2 * 3600_000);
+      checkRaiseRate(getRepo(1)!);
+      expect(alerts()).toEqual([{ message: expect.any(String), ack_at: expect.any(Number) }]);
+    });
+
+    it('uses the limit from the settings, and ignores records without a time', () => {
+      saveSettings({ raiseAlertPerHour: 2 });
+      run('UPDATE tickets SET raised = ? WHERE id = 1', JSON.stringify([1, 2, 3].map((i) => ({ number: 200 + i, url: 'u', title: `T${i}`, runId: 'r' }))));
+      checkRaiseRate(getRepo(1)!);
+      expect(alerts()).toEqual([]);
+      seed(3, Date.now());
+      checkRaiseRate(getRepo(1)!);
+      expect(alerts()).toHaveLength(1);
+    });
+
+    it('is checked after each ticket an agent opens', async () => {
+      saveSettings({ raiseAlertPerHour: 1 });
+      run('UPDATE tickets SET raised = ? WHERE id = 1', JSON.stringify([{ number: 30, url: 'u', title: 'Something else entirely', runId: 'old', at: Date.now() }]));
+      await settle(classify());
+      expect(fake.tickets.createTicket).toHaveBeenCalledTimes(1);
+      expect(alerts()).toEqual([{ message: expect.stringContaining('Agents opened 2 tickets'), ack_at: null }]);
+    });
+  });
+
+  it.each(['design', 'implement'] as const)('%s blocked on an open ticket links it without opening one', async (agent) => {
+    run('UPDATE tickets SET labels = ? WHERE id = 1', JSON.stringify([label.size('l'), label.stage(agent)]));
+    fake.env = new FakeEnv({ prepare: ['ok'], run: [result({ outcome: 'blocked', summary: 'Needs #2 first.', blocked_by: [2] })], publish: [line({ before: 'aaa', after: 'bbb', ahead: 1 })] });
+    expect((await settle(go(agent))).status).toBe('succeeded');
+    expect(JSON.parse(file(fake.env, '.workshop/schema.json')).properties.blocked_by).toMatchObject({ type: 'array' });
+    expect(fake.tickets.createTicket).not.toHaveBeenCalled();
+    expect(fake.tickets.addBlocker).toHaveBeenCalledWith(expect.anything(), 3, 2);
+    expect(blockedBy()).toBe('["#2"]');
   });
 
   it('reuses a ticket this one raised earlier as noticed work', async () => {

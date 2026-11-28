@@ -76,6 +76,8 @@ export interface Raised {
   runId: string;
   /** Raised as a prerequisite this ticket waits for, not as noticed work. */
   blocker?: boolean;
+  /** When it was opened (epoch ms). Older records have none. */
+  at?: number;
 }
 export const raisedOf = (t: TicketRow): Raised[] => (t.raised ? JSON.parse(t.raised) : []);
 /** A smaller ticket opened in place of a large one. `index` is its position in the Classifier's list. */
