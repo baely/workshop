@@ -244,6 +244,11 @@ function ConnectionItem(props: { c: ConnectionView; provider: ProviderInfo; onEd
       </div>
       {(specs || credentials) && <span className="small muted">{[specs, credentials].filter(Boolean).join(' · ')}</span>}
       {isHost && <HostSlots config={c.config} />}
+      {isHost && (
+        <span className="small muted">
+          Host ID <code>{c.id}</code>
+        </span>
+      )}
       {c.status === 'error' && c.error && <span className="small error-text">{c.error}</span>}
       {test && <span className={`small ${test.ok ? '' : 'error-text'}`}>{test.message}</span>}
       {extra}

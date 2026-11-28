@@ -146,13 +146,16 @@ export function General() {
   );
 }
 
+/** A subscription's limits as you edit them, with whether its weekly limit follows the burndown. */
+type Draft = SubLimits & { burndown: boolean };
+
 export function Limits() {
   const { draft, error, set, save, saved, saveError, touch } = useSettings();
   const usage = useApi<Usage>('/usage', ['allowance', 'connections']);
   // Limits you've edited, by connection; the rest show what's saved.
-  const [limits, setLimits] = useState<Record<number, SubLimits>>({});
+  const [limits, setLimits] = useState<Record<number, Draft>>({});
   if (!draft) return <ErrorNote error={error} />;
-  const setLimit = (connectionId: number, current: SubLimits, patch: Partial<SubLimits>) => {
+  const setLimit = (connectionId: number, current: Draft, patch: Partial<Draft>) => {
     setLimits({ ...limits, [connectionId]: { ...current, ...patch } });
     touch();
   };
@@ -160,7 +163,7 @@ export function Limits() {
     await api('/settings', { method: 'PUT', body: { apiRunCapUsd: draft.apiRunCapUsd, apiDailyCapUsd: draft.apiDailyCapUsd } });
     for (const a of usage.data?.allowance ?? []) {
       const edit = limits[a.connectionId];
-      if (edit && (edit.fiveHour !== a.limits.fiveHour || edit.weekly !== a.limits.weekly)) await api(`/usage/limits/${a.connectionId}`, { method: 'PUT', body: edit });
+      if (edit && (edit.fiveHour !== a.limits.fiveHour || edit.weekly !== a.limits.weekly || edit.burndown !== a.burndown.enabled)) await api(`/usage/limits/${a.connectionId}`, { method: 'PUT', body: edit });
     }
     setLimits({});
   });
@@ -178,11 +181,13 @@ export function Limits() {
                   <th>Subscription</th>
                   <th>5-hour limit (%)</th>
                   <th>Weekly limit (%)</th>
+                  <th>Weekly burndown</th>
                 </tr>
               </thead>
               <tbody>
                 {usage.data.allowance.map((a) => {
-                  const current = limits[a.connectionId] ?? a.limits;
+                  const current = limits[a.connectionId] ?? { ...a.limits, burndown: a.burndown.enabled };
+                  const { ceiling, target } = a.burndown;
                   return (
                     <tr key={a.connectionId}>
                       <td>{a.connectionName}</td>
@@ -191,6 +196,19 @@ export function Limits() {
                       </td>
                       <td>
                         <input type="number" aria-label={`${a.connectionName} weekly limit`} title={explain} min={0} max={100} value={current.weekly} onChange={(e) => setLimit(a.connectionId, current, { weekly: Number(e.target.value) })} required />
+                      </td>
+                      <td>
+                        <label
+                          className="check"
+                          title={`Workshop raises this subscription's weekly limit through the week, so usage reaches about ${target}% when it resets. Your weekly limit still caps it: set it to 100% to let the burndown decide.`}
+                        >
+                          <input type="checkbox" checked={current.burndown} onChange={(e) => setLimit(a.connectionId, current, { burndown: e.target.checked })} />
+                          Follow it
+                          <span className="small muted">
+                            {ceiling === null ? 'needs a reading from this week' : `now ${Math.round(ceiling)}%`}
+                            {current.burndown && current.weekly < target ? `, your ${current.weekly}% stops it first` : ''}
+                          </span>
+                        </label>
                       </td>
                     </tr>
                   );

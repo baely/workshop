@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { RepoView } from '../../../../../server/src/api-types.ts';
+import type { RepoView, ReworkOn } from '../../../../../server/src/api-types.ts';
 import { api, useApi } from '../../../api.ts';
 import { Icon } from '../../components/Icon.tsx';
 import { Empty, ErrorNote, Field, Panel, Status, Switch, Tag } from '../../components/ui.tsx';
@@ -11,7 +11,7 @@ function RepoRow({ repo, onChange }: { repo: RepoView; onChange: (id: number, bo
     setEnabling(enabled);
     onChange(repo.id, { enabled }).finally(() => setEnabling(null));
   };
-  const saved = (): RepoDraft => ({ selection: repo.selection, priority: String(repo.priority), image: repo.image ?? '', mergeWithoutReview: repo.mergeWithoutReview, pushToDefault: repo.pushToDefault, raiseTickets: repo.raiseTickets });
+  const saved = (): RepoDraft => ({ selection: repo.selection, priority: String(repo.priority), image: repo.image ?? '', mergeWithoutReview: repo.mergeWithoutReview, pushToDefault: repo.pushToDefault, raiseTickets: repo.raiseTickets, reworkOn: repo.reworkOn });
   const [draft, setDraft] = useState(saved);
   const [saving, setSaving] = useState(false);
   const changes = repoChanges(repo, draft);
@@ -69,6 +69,13 @@ function RepoRow({ repo, onChange }: { repo: RepoView; onChange: (id: number, bo
             </Field>
             <Field label="Priority" hint="Repositories with a higher priority go first: a lower one waits until every open ticket in the higher ones has been classified.">
               <input type="number" step={1} min={-100} max={100} value={draft.priority} onChange={(e) => setDraft({ ...draft, priority: e.target.value })} />
+            </Field>
+            <Field label="Send back for rework on" hint="The lowest code review severity that sends a ticket back to design or implementation. Workshop sends it back at most 3 times per review round.">
+              <select value={draft.reworkOn} onChange={(e) => setDraft({ ...draft, reworkOn: e.target.value as ReworkOn })}>
+                <option value="severe">Severe findings only</option>
+                <option value="moderate">Moderate and severe findings</option>
+                <option value="minor">All findings</option>
+              </select>
             </Field>
             <Field
               label="Agent image"

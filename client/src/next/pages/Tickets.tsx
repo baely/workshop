@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import type { Push, Size, Stage, TicketStatePatch, TicketView } from '../../../../server/src/api-types.ts';
 import { api, useApi } from '../../api.ts';
+import { SyncButton } from '../../components/SyncButton.tsx';
 import { Icon } from '../components/Icon.tsx';
 import { ErrorNote, Menu, Modal, PageHead, Segmented, Status, Tag, useAction, type MenuItem } from '../components/ui.tsx';
 import { STAGE_TEXT, ticketStatus } from '../../format.ts';
@@ -214,17 +215,12 @@ export function Tickets() {
   const [repo, setRepo] = useState('');
   const [filter, setFilter] = useState(FILTERS[0].label);
   const [query, setQuery] = useState('');
-  const [syncing, setSyncing] = useState(false);
   const repos = [...new Set((data ?? []).map((t) => t.repo))].sort();
   const match = FILTERS.find((f) => f.label === filter)!.match;
   const q = query.trim().toLowerCase();
   const inRepo = (data ?? []).filter((t) => !repo || t.repo === repo);
   const shown = inRepo.filter((t) => match(t) && (!q || t.title.toLowerCase().includes(q) || `#${t.number}`.includes(q)));
 
-  const sync = () => {
-    setSyncing(true);
-    api('/sync', { body: {} }).finally(() => setTimeout(() => setSyncing(false), 1500));
-  };
 
   return (
     <div className="stack">
@@ -232,10 +228,7 @@ export function Tickets() {
         <Link className="button" to="/dependencies">
           Dependencies
         </Link>
-        <button onClick={sync} disabled={syncing}>
-          <Icon name="refresh" />
-          {syncing ? 'Syncing…' : 'Sync'}
-        </button>
+        <SyncButton action="/sync" label="Sync" title="Sync tickets from GitHub now" />
       </PageHead>
       <div className="toolbar">
         <Segmented label="Show" value={filter} onChange={setFilter} options={FILTERS.map((f) => ({ value: f.label, label: <>{f.label} <span className="count">{inRepo.filter(f.match).length}</span></> }))} />

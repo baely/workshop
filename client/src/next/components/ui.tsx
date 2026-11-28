@@ -19,15 +19,22 @@ export function Tag({ tone, icon, title, children }: { tone?: 'accent' | 'attent
   );
 }
 
-export function Meter({ label, window, threshold }: { label: string; window: UsageWindow | null; threshold: number }) {
+/** A usage bar with your limit as a solid line and, when the weekly burndown is on, its line dotted. */
+export function Meter({ label, window, threshold, burndown = null, target }: { label: string; window: UsageWindow | null; threshold: number; burndown?: number | null; target?: number }) {
   const pct = window && (!window.resetsAt || window.resetsAt > Date.now()) ? window.pct : 0;
   const resets = window?.resetsAt ? `, resets ${clock(window.resetsAt)}` : '';
+  const line = burndown === null ? threshold : Math.min(threshold, burndown);
+  const rule =
+    burndown === null
+      ? `No new agents start above ${threshold}%.`
+      : `Solid line: your limit, ${threshold}%. Dotted line: the burndown, ${Math.round(burndown)}% now${target === undefined ? '' : `, rising to ${target}% by the reset`}. No new agents start above the lower one.`;
   return (
-    <div className="meter" title={`${label} allowance: ${Math.round(pct)}% used${resets}. No new agents start above ${threshold}%.`}>
+    <div className="meter" title={`${label} allowance: ${Math.round(pct)}% used${resets}. ${rule}`}>
       <span className="muted">{label}</span>
-      <div className="meter-track" role="meter" aria-label={`${label} allowance used`} aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
-        <div className={`meter-fill${pct > threshold ? ' over' : ''}`} style={{ width: `${Math.min(100, pct)}%` }} />
+      <div className="meter-track" role="meter" aria-label={`${label} allowance used, limit ${Math.round(line)}%`} aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
+        <div className={`meter-fill${pct > line ? ' over' : ''}`} style={{ width: `${Math.min(100, pct)}%` }} />
         <div className="meter-mark" style={{ left: `${threshold}%` }} />
+        {burndown !== null && <div className="meter-mark burndown" style={{ left: `${Math.min(100, burndown)}%` }} />}
       </div>
       <span className="num">{Math.round(pct)}%</span>
     </div>
@@ -35,13 +42,13 @@ export function Meter({ label, window, threshold }: { label: string; window: Usa
 }
 
 /** A bar for how much of a limit is used, e.g. turns of max turns, or slots in use. */
-export function Progress({ label, value, max, text }: { label: string; value: number; max: number; text: string }) {
+export function Progress({ label, value, max, text, over = value >= max }: { label: string; value: number; max: number; text: string; over?: boolean }) {
   const pct = max > 0 ? Math.min(100, (value / max) * 100) : 100;
   return (
     <div className="meter">
       <span>{label}</span>
       <div className="meter-track" role="meter" aria-label={label} aria-valuenow={value} aria-valuemin={0} aria-valuemax={max}>
-        <div className={`meter-fill${value >= max ? ' over' : ''}`} style={{ width: `${pct}%` }} />
+        <div className={`meter-fill${over ? ' over' : ''}`} style={{ width: `${pct}%` }} />
       </div>
       <span className="muted">{text}</span>
     </div>
