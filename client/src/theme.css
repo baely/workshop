@@ -600,6 +600,11 @@ input[type='checkbox'] {
   width: 2px;
   background: var(--text);
 }
+.meter-mark.burndown {
+  width: 0;
+  background: none;
+  border-left: 2px dotted var(--text);
+}
 
 /* Sync now and Refresh: what the sync is doing, next to the button */
 .sync-control {
