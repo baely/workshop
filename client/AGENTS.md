@@ -19,6 +19,13 @@ The Workshop UI: React 19, React Router 8, Vite. Plain CSS with custom propertie
 | `src/pages/` | Login, Dashboard, Tickets, Runs, RunView, Usage (charts, projections and lifetime tables), Connections, Agents, Settings, Alerts, Ticket (a ticket's lifecycle, `tickets/:id`), Media (a ticket's screenshots, `tickets/:id/media`) |
 | `src/theme.css` | Every colour, size and component style |
 
+## Two interfaces
+
+`main.tsx` loads one of two apps, chosen per browser (`interface.ts`, switched from Settings): the original (`App.tsx`, `components/`, `pages/`, `theme.css`) and the new one being tried out (`next/`: its own `App.tsx`, `components/`, `pages/` and `theme.css`). Each brings its own stylesheet, so they can't share class rules by accident. They share everything without markup opinions (`api.ts`, `live.ts`, `format.ts`, `transcript.ts`, `markdown.ts`, the charts) and the Login and Usage pages.
+
+- A change to behaviour goes into both until the original is retired.
+- `next/` differs in layout and words on screen, not in what it can do: Home, Tickets, Runs, Usage, and every setting on one tab of `/settings`. Its theme is neutral greys with one blue accent; explanations sit behind `Hint`, and a row's secondary actions in a `Menu`.
+
 ## Data flow
 
 - Types come from `../../server/src/api-types.ts`, **type-only**. Never import other server modules: they pull in Node built-ins.

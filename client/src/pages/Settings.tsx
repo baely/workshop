@@ -4,6 +4,7 @@ import type { ApiTokenView, Limits, NewApiToken, Settings, TicketOrder, Usage } 
 import { TOKEN_LIFETIMES } from '../access.ts';
 import { api, useApi, useNow } from '../api.ts';
 import { ErrorNote, Panel } from '../components/ui.tsx';
+import { setNewInterface } from '../interface.ts';
 import { ago, clock } from '../format.ts';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -313,6 +314,14 @@ export function SettingsPage() {
       </div>
     </form>
     <ApiTokens />
+      <Panel title="Interface">
+        <div className="panel-body row">
+          <button type="button" onClick={() => setNewInterface(true)}>
+            Try the new interface
+          </button>
+          <span className="small muted">A redesigned layout and a black, white and blue theme, for this browser only. Switch back under Settings there.</span>
+        </div>
+      </Panel>
     </div>
   );
 }
