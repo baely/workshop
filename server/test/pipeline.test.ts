@@ -1855,6 +1855,54 @@ describe('breaking large tickets down', () => {
   });
 });
 
+describe('usage of a session that ends without a result', () => {
+  const reply = (id: string, read: number, text: string) => line({ type: 'assistant', parent_tool_use_id: null, message: { id, usage: { input_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 }, content: [{ type: 'text', text }] } });
+  const spend = (id: string) => all<{ input_tokens: number; output_tokens: number; cost_usd: number }>('SELECT input_tokens, output_tokens, cost_usd FROM spend WHERE run_id = ?', id);
+
+  it('records what the agent used before it ran out of time', async () => {
+    // An earlier run of this model sets the price: $1 for 1,000,000 tokens.
+    run("INSERT INTO spend (run_id, ts, model, billing, input_tokens, output_tokens, cost_usd) VALUES ('earlier', 1, 'claude-priced', 'subscription', 990000, 10000, 1)");
+    const env = new FakeEnv({});
+    let release = () => {};
+    env.inspect = async () => ({ running: true, exitCode: 0, oomKilled: false });
+    env.follow = (_id: string, _skip: number, onLine: (l: { stream: 'stdout'; text: string }) => void) => {
+      for (const text of [reply('m1', 990, 'x'.repeat(220)), reply('m1', 990, 'y'.repeat(110)), reply('m2', 1990, '')]) onLine({ stream: 'stdout', text });
+      return new Promise<void>((done) => (release = done));
+    };
+    env.kill = async () => release();
+    env.wait = async () => ({ running: false, exitCode: 137, oomKilled: false });
+    fake.env = env;
+    run(
+      `INSERT INTO runs (id, ticket_id, agent, mode, attempt, environment_id, model_connection_id, model, billing, status, step, container_id, volume, image, max_turns, timeout_min, step_started_at, started_at)
+       VALUES ('cut-short', 1, 'implement', 'normal', 1, ?, ?, 'claude-priced', 'subscription', 'running', 'run', 'run-container-old', 'v', 'img', 300, 1, ?, ?)`,
+      ids.env,
+      ids.model,
+      Date.now() - 5 * 60_000,
+      Date.now() - 6 * 60_000,
+    );
+    try {
+      await drive('cut-short');
+      expect(getRun('cut-short')).toMatchObject({ status: 'failed', error: 'Stopped after the 1-minute time limit.', input_tokens: 3000, output_tokens: 300 });
+      const [row] = spend('cut-short');
+      expect(row).toMatchObject({ input_tokens: 3000, output_tokens: 300 });
+      expect(row.cost_usd).toBeCloseTo(0.0033, 6);
+    } finally {
+      run("DELETE FROM spend WHERE run_id IN ('earlier', 'cut-short')");
+    }
+  });
+
+  it("leaves a run that printed a result to the result's own figures", async () => {
+    fake.env = new FakeEnv({
+      prepare: ['ok'],
+      run: [reply('m1', 990, 'hello'), line({ type: 'result', subtype: 'success', is_error: false, total_cost_usd: 0.5, structured_output: { outcome: 'done', summary: 'ok', tests: 'ok' }, usage: { input_tokens: 10, output_tokens: 5 } })],
+      publish: [line({ before: '', after: 'def5678', ahead: 1 })],
+    });
+    const id = go();
+    await settle(id);
+    expect(spend(id)).toEqual([{ input_tokens: 10, output_tokens: 5, cost_usd: 0.5 }]);
+  });
+});
+
 describe('launchNow', () => {
   const script = () => ({ prepare: ['ok'], run: [RATE, result({ outcome: 'done', summary: 'Done.', tests: 'ok' })], publish: [line({ before: '', after: 'def5678', ahead: 1 })] });
 
