@@ -27,7 +27,7 @@ const { bus, publish } = await import('../src/events.ts');
 const { activity, getRun, readLog, runView } = await import('../src/runs.ts');
 const { sweepMedia } = await import('../src/media.ts');
 const { checkRaiseRate, connectionPaused, drive, isDriving, launch, onRunSettled, PAUSE_GRACE_MS, requestPause, resume, stopRun } = await import('../src/scheduler/runner.ts');
-const { allocate, allocatePass, buildQueue, forgetProbe, hostLoads, hostViews, kick, launchNow, mergeApproved, probeAllowance, probeIdle, queueView, reattachRuns, refreshNow, resetSyncProgress, resumeNow, resumePaused, settleManual, syncProgress, syncSoon, tick } = await import('../src/scheduler/loop.ts');
+const { allocate, allocatePass, buildQueue, cancelKicks, forgetProbe, hostLoads, hostViews, kick, launchNow, mergeApproved, probeAllowance, probeIdle, queueView, reattachRuns, refreshNow, resetSyncProgress, resumeNow, resumePaused, settleManual, syncProgress, syncSoon, tick } = await import('../src/scheduler/loop.ts');
 const { setBypassLimits, setPrioritised, setPush, getTicket, ticketView, getRepo, partsOf, priorityGraph } = await import('../src/tickets.ts');
 const { checkingBlockers, syncRepo, HELD_CHECKS_PER_SYNC, LINK_BACKFILL_PER_SYNC } = await import('../src/scheduler/sync.ts');
 const { pushMessage } = await import('../src/scheduler/merge.ts');
@@ -109,6 +109,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   publish('tickets'); // tests write rows directly, so drop the cached priority graph
+  cancelKicks(); // a kick left by the last test would allocate (and move paused runs) in this one
   run("UPDATE tickets SET labels = ?, failures = 0, pr_number = NULL, blocked_by = '[]', push = NULL, push_stage = NULL, branch = NULL, state = 'open', pr_status = NULL, rescue = NULL, handoff = NULL, rework = NULL, follow_ups = NULL, prioritised = 0, bypass_limits = 0 WHERE id = 1", JSON.stringify([label.size('s'), label.stage('implement')]));
   run('DELETE FROM runs');
   fake.models = { launchEnv: () => ({ CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-test' }), billing: () => ['subscription'], models: () => [] };
@@ -2945,6 +2946,7 @@ describe('sync', () => {
       fake.vcs.closePullRequest = vi.fn(async () => {
         throw new Error('boom');
       });
+      run("UPDATE repos SET synced_at = '2026-01-01T00:00:00.000Z' WHERE id = 1"); // the last sync may share this millisecond
       const before = repo().synced_at;
       await syncRepo(repo());
       expect(one<{ message: string }>("SELECT message FROM alerts WHERE kind = 'close-cleanup' AND ack_at IS NULL")?.message).toContain('boom');
