@@ -17,7 +17,7 @@ export function addTurns(runId: string, turns: number) {
   run('INSERT INTO run_stats (run_id, turns) VALUES (?, ?) ON CONFLICT (run_id) DO UPDATE SET turns = COALESCE(turns, 0) + excluded.turns', runId, turns);
 }
 
-/** What the run's own commits changed. */
+/** How the ticket's branch differed from the default branch once the run had pushed. */
 export function setDiff(runId: string, diff: { files: number; additions: number; deletions: number }) {
   run(
     'INSERT INTO run_stats (run_id, files, additions, deletions) VALUES (?, ?, ?, ?) ON CONFLICT (run_id) DO UPDATE SET files = excluded.files, additions = excluded.additions, deletions = excluded.deletions',

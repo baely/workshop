@@ -1997,11 +1997,11 @@ describe('run statistics', () => {
     });
     const id = go();
     await settle(id);
-    expect(fake.vcs.diffStats).toHaveBeenCalledWith(expect.anything(), 'abc1234', 'def5678');
+    expect(fake.vcs.diffStats).toHaveBeenCalledWith(expect.anything(), 'main', 'def5678');
     expect(runView(id)).toMatchObject({ turns: 42, diff: { files: 3, additions: 120, deletions: 14 } });
   });
 
-  it('compares a first push with the default branch, and shrugs off a host that cannot count', async () => {
+  it('shrugs off a host that cannot count', async () => {
     fake.vcs.diffStats = vi.fn(async () => {
       throw new Error('nope');
     });

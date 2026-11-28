@@ -36,6 +36,9 @@ export function Runs() {
   const sum = (pick: (r: RunView) => number) => shown.reduce((n, r) => n + pick(r), 0);
   const took = sum((r) => (r.endedAt ?? now) - r.startedAt);
   const cost = sum((r) => r.costUsd ?? 0);
+  // A run's changes are its ticket's whole branch against the default branch, so a ticket counts once: its latest run.
+  const finals = [...new Map([...shown].reverse().filter((r) => r.diff).map((r) => [r.ticketId, r.diff!])).values()];
+  const changed = { files: finals.reduce((n, d) => n + d.files, 0), additions: finals.reduce((n, d) => n + d.additions, 0), deletions: finals.reduce((n, d) => n + d.deletions, 0) };
   return (
     <div className="stack">
       <PageHead title="Runs" />
@@ -57,7 +60,7 @@ export function Runs() {
           <Stat label="Agent time" value={hours(took)} sub={`${hours(took / shown.length)} a run`} />
           <Stat label="Turns" value={sum((r) => r.turns ?? 0).toLocaleString()} sub={`${Math.round(sum((r) => r.turns ?? 0) / shown.length)} a run`} />
           <Stat label="Cost" value={money(cost)} sub={`${money(cost / shown.length)} a run, at API prices`} />
-          <Stat label="Lines changed" value={<Diff diff={{ files: sum((r) => r.diff?.files ?? 0), additions: sum((r) => r.diff?.additions ?? 0), deletions: sum((r) => r.diff?.deletions ?? 0) }} />} sub="added, removed, files" />
+          <Stat label="Lines changed" value={<Diff diff={changed} />} sub={`across ${finals.length} ${finals.length === 1 ? 'ticket' : 'tickets'}`} />
         </div>
       )}
       {data && (
@@ -76,7 +79,7 @@ export function Runs() {
                   <th className="num" title="What the tokens would cost at API prices">
                     Cost
                   </th>
-                  <th className="num" title="Lines added and removed by this run's commits, and files changed">
+                  <th className="num" title="The ticket's branch against the default branch after this run: lines added, lines removed, files">
                     Changes
                   </th>
                 </tr>

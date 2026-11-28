@@ -26,7 +26,7 @@ export function Runs() {
                 <th>Took</th>
                 <th>Turns</th>
                 <th>Usage</th>
-                <th>Changes</th>
+                <th title="The ticket's branch against the default branch after this run">Changes</th>
               </tr>
             </thead>
             <tbody>

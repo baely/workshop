@@ -831,9 +831,11 @@ async function publishRun(ctx: Ctx) {
       if (exitCode === 0 || pushed.rescued) {
         state.pushed = pushed;
         setRun(r.id, { publish_state: JSON.stringify(state) });
-        // What this run's commits changed, for the Runs page. Never worth failing a publish over.
+        // How the ticket's branch differs from the default branch after this push, for the Runs page. Against the
+        // default branch rather than the push's own range, so merging the default branch in doesn't count as the
+        // agent's work. Never worth failing a publish over.
         if (exitCode === 0 && pushed.after && pushed.after !== pushed.before) {
-          await vcs.diffStats?.(repo, pushed.before || ctx.repo.default_branch, pushed.after).then((diff) => setDiff(r.id, diff), (err) => warn(r.id, `Workshop couldn't count what this run changed: ${(err as Error).message}`));
+          await vcs.diffStats?.(repo, ctx.repo.default_branch, pushed.after).then((diff) => setDiff(r.id, diff), (err) => warn(r.id, `Workshop couldn't count what this run changed: ${(err as Error).message}`));
         }
       }
     }
