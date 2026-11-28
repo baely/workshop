@@ -11,7 +11,7 @@ function RepoRow({ repo, onChange }: { repo: RepoView; onChange: (id: number, bo
     setEnabling(enabled);
     onChange(repo.id, { enabled }).finally(() => setEnabling(null));
   };
-  const saved = (): RepoDraft => ({ selection: repo.selection, priority: String(repo.priority), image: repo.image ?? '', mergeWithoutReview: repo.mergeWithoutReview, pushToDefault: repo.pushToDefault, raiseTickets: repo.raiseTickets, reworkOn: repo.reworkOn });
+  const saved = (): RepoDraft => ({ selection: repo.selection, priority: String(repo.priority), image: repo.image ?? '', mergeWithoutReview: repo.mergeWithoutReview, pushToDefault: repo.pushToDefault, raiseTickets: repo.raiseTickets, reworkOn: repo.reworkOn, anyAuthor: repo.anyAuthor });
   const [draft, setDraft] = useState(saved);
   const [saving, setSaving] = useState(false);
   const changes = repoChanges(repo, draft);
@@ -42,6 +42,7 @@ function RepoRow({ repo, onChange }: { repo: RepoView; onChange: (id: number, bo
           {repo.enabled && repo.mergeWithoutReview && !repo.pushToDefault && <Tag>Merges without review</Tag>}
           {repo.enabled && repo.pushToDefault && <Tag>Pushes to {repo.defaultBranch}</Tag>}
           {repo.enabled && repo.raiseTickets && <Tag>Raises tickets</Tag>}
+          {repo.enabled && repo.anyAuthor && <Tag tone="attention">Tickets from anyone</Tag>}
           {enabling !== null && <span className="spinner" role="status" aria-label={enabling ? 'Turning on' : 'Turning off'} />}
         </div>
         {repo.enabled && enabling === null && (
@@ -96,6 +97,10 @@ function RepoRow({ repo, onChange }: { repo: RepoView; onChange: (id: number, bo
             <label className="check" title="When an agent comes across a problem outside its ticket, or work its ticket needs first, Workshop opens a ticket for it.">
               <input type="checkbox" checked={draft.raiseTickets} onChange={(e) => setDraft({ ...draft, raiseTickets: e.target.checked })} />
               Agents open tickets for what they notice
+            </label>
+            <label className="check" title="Workshop works on tickets here whoever opened them, not only your ticket authors. Agents still read comments only from your ticket authors and the ticket's own author.">
+              <input type="checkbox" checked={draft.anyAuthor} onChange={(e) => setDraft({ ...draft, anyAuthor: e.target.checked })} />
+              Tickets from anyone
             </label>
           </div>
           <div className="row">
