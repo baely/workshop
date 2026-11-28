@@ -173,7 +173,7 @@ async function review(findings: object[] = [], over: object = {}) {
 const ticketLabels = () => JSON.parse(getTicket(1)!.labels) as string[];
 
 describe('runner', () => {
-  it('publishes runs when the agent finishes, even if its last activity was throttled', async () => {
+  it('publishes activity, not runs, for activity-only changes, and runs when the agent finishes', async () => {
     const tool = (command: string) => line({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command } }] } });
     fake.env = new FakeEnv({
       prepare: ['ok'],
@@ -188,8 +188,12 @@ describe('runner', () => {
     } finally {
       bus.off('topic', listener);
     }
-    // The second tool call fell inside the 3s throttle window; the runner must still announce it.
-    expect(topics.filter((t) => t === 'runs').length).toBeGreaterThanOrEqual(3);
+    // The first tool call only changes the activity text. The second falls inside the 3s throttle window,
+    // and the result line, a state change, announces it with 'runs' straight after.
+    expect(topics.filter((t) => t === 'activity')).toHaveLength(1);
+    const at = topics.indexOf('activity');
+    expect(topics.slice(0, at)).toContain('runs'); // starting
+    expect(topics[at + 1]).toBe('runs');
   });
 
   it.each([

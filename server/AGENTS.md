@@ -12,7 +12,7 @@ The Workshop server: TypeScript run directly by Node 24 (`node src/index.ts`), E
 | `src/crypto.ts` | AES-256-GCM `seal`/`unseal` for stored secrets, TOTP, constant-time compare |
 | `src/settings.ts` | Operating settings (one JSON row) plus a key/value store |
 | `src/api-types.ts` | Types shared with the client. **No runtime imports.** |
-| `src/events.ts` | Topic bus plus SSE helper. `publish('runs')` makes browsers refetch run views. SSE streams send a visible `ping` event every 15 s |
+| `src/events.ts` | Topic bus plus SSE helper. `publish('runs')` makes browsers refetch run views. An agent's activity text alone publishes `activity`, which only the views showing it listen to. SSE streams send a visible `ping` event every 15 s |
 | `src/alerts.ts` | `raiseAlert` (de-duplicated by kind and ref) and `clearAlert` |
 | `src/agents.ts` | Agent-class settings, defaults, suggested models |
 | `src/tickets.ts` | Ticket and repo rows, views, `editLabels` (remote first, then local mirror) |

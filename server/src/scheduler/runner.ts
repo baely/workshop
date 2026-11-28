@@ -483,15 +483,16 @@ async function runAgent(ctx: Ctx): Promise<boolean> {
       } else if (claude.activity && claude.activity !== before) {
         activity.set(r.id, claude.activity);
         // Throttled, but never drop the latest change: a trailing publish catches up once the window ends.
+        // Only the activity text changed, so only the views that show it refetch.
         const wait = lastPublished + 3000 - Date.now();
         if (wait <= 0) {
           lastPublished = Date.now();
-          publish('runs');
+          publish('activity');
         } else if (!trailing) {
           trailing = setTimeout(() => {
             trailing = undefined;
             lastPublished = Date.now();
-            publish('runs');
+            publish('activity');
           }, wait);
         }
       }
