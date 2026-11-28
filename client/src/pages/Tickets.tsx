@@ -81,6 +81,8 @@ export function TicketTags({ t }: { t: TicketView }) {
       {t.push && <Tag tone="accent" title={t.push === 'stage' ? 'Pushed: next stage only' : 'Pushed: until it needs you'}>Pushed</Tag>}
       {t.bypassLimits && <Tag title="Ignores your usage limits">No limits</Tag>}
       {t.nominated === false && <Tag title="Not nominated: Workshop leaves it alone">Not nominated</Tag>}
+      {t.labels.includes('workshop/split') && <Tag title="Broken into smaller tickets, which Workshop works on instead">Split</Tag>}
+      {t.labels.includes('workshop/too-big') && <Tag tone="attention" title="An agent ran out of turns or time. The Classifier breaks it down next">Too big</Tag>}
     </>
   );
 }
